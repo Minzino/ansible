@@ -1,0 +1,9 @@
+---
+# handlers file for etcd
+
+- name: restart etcd
+  systemd:
+    name: etcd
+    state: restarted
+    daemon_reload: true # Ensure systemd reads the new unit file
+  become: true 

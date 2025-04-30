@@ -1,0 +1,155 @@
+---
+# tasks file for load_balancer
+
+# Apply this role only to master nodes where VIP should reside
+
+- name: Install PCS and related packages (Debian/Ubuntu)
+  apt:
+    name:
+      - pcs
+      - pacemaker
+      - corosync
+      - fence-agents # Or specific fence agent if known
+    state: present
+    update_cache: true
+  become: true
+  when: ansible_os_family == "Debian"
+
+# Add equivalent for RedHat/CentOS if needed (yum/dnf)
+
+- name: Set password for hacluster user
+  user:
+    name: hacluster
+    password: "{{ pcs_hacluster_password | password_hash('sha512') }}"
+  become: true
+  no_log: true # Avoid logging the password hash
+
+- name: Start and enable pcsd service
+  systemd:
+    name: pcsd
+    state: started
+    enabled: true
+  become: true
+
+# Check authentication status before attempting auth
+- name: Check if nodes are already authenticated
+  command:
+    cmd: pcs host status
+  register: pcs_auth_status
+  run_once: true
+  when: inventory_hostname == groups['masters'][0]
+  changed_when: false
+  failed_when: false # Don't fail if command fails (e.g., not authenticated yet)
+  become: true
+
+- name: Authenticate cluster nodes using pcs host auth
+  command:
+    cmd: pcs host auth {{ groups['masters'] | join(' ') }} -u hacluster -p {{ pcs_hacluster_password }}
+  become: true
+  run_once: true
+  no_log: true
+  when:
+    - inventory_hostname == groups['masters'][0]
+    # Only run if status check failed or indicated not all nodes authenticated
+    - pcs_auth_status.rc != 0 or 
+      (pcs_auth_status.stdout is defined and 
+       ( (groups['masters'] | length) > (pcs_auth_status.stdout.split('Authorized') | length -1) ))
+  # Consider adding retries or better error checking
+
+# Check cluster status before setup
+- name: Check if cluster is already configured
+  command:
+    cmd: pcs cluster status
+  register: pcs_cluster_status_check
+  run_once: true
+  when: inventory_hostname == groups['masters'][0]
+  changed_when: false
+  failed_when: false # Command fails if cluster not set up
+  become: true
+
+- name: Create the Corosync cluster
+  command:
+    cmd: pcs cluster setup {{ pcs_cluster_name }} {{ groups['masters'] | join(' ') }} --force --start
+  become: true
+  run_once: true
+  when:
+    - inventory_hostname == groups['masters'][0]
+    - pcs_cluster_status_check.rc != 0 # Only run if cluster status check failed
+
+- name: Enable cluster services on boot
+  command:
+    cmd: pcs cluster enable --all
+  become: true
+  run_once: true
+  when: inventory_hostname == groups['masters'][0]
+  changed_when: false
+  # This command is generally safe to re-run
+
+# Check properties before setting them
+- name: Check current STONITH setting
+  command:
+    cmd: pcs property show stonith-enabled
+  register: stonith_check
+  run_once: true
+  when: inventory_hostname == groups['masters'][0]
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: Disable STONITH (!!! NOT RECOMMENDED FOR PRODUCTION !!!)
+  command:
+    cmd: pcs property set stonith-enabled=false
+  become: true
+  run_once: true
+  when:
+    - inventory_hostname == groups['masters'][0]
+    - disable_stonith
+    # Only set if current value is not 'false'
+    - stonith_check.rc != 0 or (stonith_check.stdout is defined and 'false' not in stonith_check.stdout.lower())
+
+- name: Check current no-quorum-policy setting
+  command:
+    cmd: pcs property show no-quorum-policy
+  register: quorum_check
+  run_once: true
+  when: inventory_hostname == groups['masters'][0]
+  changed_when: false
+  failed_when: false
+  become: true
+
+- name: Set no-quorum-policy (Important for clusters < 3 nodes, review for >= 3)
+  command:
+    cmd: pcs property set no-quorum-policy=ignore
+  become: true
+  run_once: true
+  when:
+    - inventory_hostname == groups['masters'][0]
+    # Only set if current value is not 'ignore'
+    - quorum_check.rc != 0 or (quorum_check.stdout is defined and 'ignore' not in quorum_check.stdout.lower())
+
+# Create the VIP resource
+- name: Check if VIP resource already exists
+  command:
+    cmd: pcs resource show {{ vip_resource_name }}
+  become: true
+  run_once: true
+  register: vip_resource_check
+  changed_when: false
+  failed_when: false # Don't fail if resource doesn't exist
+  when: inventory_hostname == groups['masters'][0]
+
+- name: Create Virtual IP Address resource
+  command:
+    cmd: >
+      pcs resource create {{ vip_resource_name }} ocf:heartbeat:IPaddr2
+      ip={{ vip_address }} cidr_netmask={{ vip_cidr_netmask }} nic={{ vip_interface }}
+      op monitor interval=30s
+  become: true
+  run_once: true
+  when:
+    - inventory_hostname == groups['masters'][0]
+    - vip_resource_check.rc != 0 # Only create if it doesn't exist
+
+# Add constraints if needed, e.g.:
+# pcs constraint colocation add <some_service> {{ vip_resource_name }} INFINITY
+# pcs constraint order <some_service> then {{ vip_resource_name }} 

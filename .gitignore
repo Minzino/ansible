@@ -1,0 +1,49 @@
+# Python cache files and byte code
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual Environment directories
+venv/
+.venv/
+env/
+.env/
+ENV/
+env.bak/
+venv.bak/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+wheels/
+*.whl
+
+# Ansible specific
+*.retry
+ansible/inventory/hosts.ini # Ignore dynamically generated inventory, keep the template
+ansible_runner_*/ # Ignore temporary ansible-runner artifact directories if created locally
+
+# Logs and runtime files
+*.log
+*.log.*
+
+# IDE / Editor specific files
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+
+# Secrets / Environment variables
+.env # Ignore .env file in client directory
+backend/.env # Ignore potential .env in backend too
+
+# Temporary files
+*.tmp
+temp/
+
+# Other
+instance/ 

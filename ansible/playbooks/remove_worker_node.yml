@@ -1,0 +1,74 @@
+---
+# Playbook to remove a worker node from the cluster
+
+# Expects 'node_to_remove_name' variable via --extra-vars
+# Inventory should include masters and the worker node being removed
+
+- name: Drain the node on the master
+  hosts: masters[0] # Run kubectl commands from the first master
+  become: false # Run as the user with ~/.kube/config
+  gather_facts: false
+  environment:
+    KUBECONFIG: "{{ ansible_env.HOME }}/.kube/config"
+  tasks:
+    - name: Drain worker node {{ node_to_remove_name }}
+      command:
+        cmd: >
+          kubectl drain {{ node_to_remove_name }}
+          --ignore-daemonsets
+          --delete-local-data # Use delete-local-data instead of deprecated delete-emptydir-data
+          --force # Force deletion even if there are pods not managed by ReplicationController, ReplicaSet, Job, DaemonSet or StatefulSet
+      register: drain_result
+      # Ignore errors if node is already cordoned or not found? Consider.
+      ignore_errors: true
+      changed_when: "'node drained' in drain_result.stdout"
+
+- name: Delete the node from the cluster
+  hosts: masters[0]
+  become: false
+  gather_facts: false
+  environment:
+    KUBECONFIG: "{{ ansible_env.HOME }}/.kube/config"
+  tasks:
+    - name: Delete node {{ node_to_remove_name }} from Kubernetes
+      command:
+        cmd: kubectl delete node {{ node_to_remove_name }}
+      register: delete_result
+      # Ignore error if node already deleted
+      ignore_errors: true
+      changed_when: "'deleted' in delete_result.stdout"
+
+- name: Reset the removed worker node
+  hosts: "{{ node_to_remove_name }}" # Target the specific worker node by name
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Reset kubeadm on node {{ node_to_remove_name }}
+      command:
+        cmd: kubeadm reset -f
+      register: reset_result
+      ignore_errors: true # Ignore errors if already reset or kubeadm not installed
+      changed_when: reset_result.rc == 0
+
+    # Optional: Add tasks to remove packages (kubelet, kubeadm, containerd), clean up dirs (/etc/cni, /var/lib/kubelet, etc.)
+    - name: Remove Kubernetes packages (optional)
+      apt:
+        name:
+          - kubelet
+          - kubeadm
+          # - kubectl # If installed
+          # - containerd # Be careful removing this if shared
+        state: absent
+        purge: yes # Remove config files as well
+      when: false # Set to true to enable package removal
+
+    - name: Clean up Kubernetes configuration files (optional)
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/kubernetes/
+        - /var/lib/kubelet/
+        - /var/lib/etcd/ # Only if etcd data dir was on this node (unlikely for worker)
+        - /etc/cni/net.d/
+      when: false # Set to true to enable cleanup 

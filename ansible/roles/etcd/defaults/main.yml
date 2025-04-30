@@ -1,0 +1,38 @@
+---
+# defaults file for etcd
+
+etcd_version: "v3.5.14" # Specify desired etcd version
+
+# ETCD Cluster Settings (adjust as needed)
+# This assumes a 3-node etcd cluster, aligning with the 3 master nodes usually
+etcd_initial_cluster_token: "etcd-cluster-1"
+etcd_initial_advertise_peer_urls_protocol: "https"
+etcd_listen_peer_urls_protocol: "https"
+etcd_initial_cluster_state: "new" # Use 'existing' when adding nodes to an existing cluster
+
+etcd_listen_client_urls_protocol: "https"
+etcd_advertise_client_urls_protocol: "https"
+
+# Paths
+etcd_data_dir: "/var/lib/etcd"
+etcd_cert_dir: "/etc/etcd/certs"
+etcd_config_dir: "/etc/etcd"
+
+# TLS Settings (set to true to enable TLS)
+etcd_peer_auto_tls: false
+etcd_client_cert_auth: false # Set true if client cert auth is needed
+
+# User/Group
+etcd_user: "etcd"
+etcd_group: "etcd"
+
+# URL for downloading etcd binaries (adjust based on version and OS)
+etcd_download_url_base: "https://github.com/etcd-io/etcd/releases/download"
+# Example: etcd_download_url: "{{ etcd_download_url_base }}/{{ etcd_version }}/etcd-{{ etcd_version }}-linux-amd64.tar.gz"
+
+# List of etcd nodes (hostname: ip) - This should ideally be derived from inventory
+# Example (will be populated by playbooks/vars):
+# etcd_nodes:
+#   - { name: 'master1', ip: '192.168.89.11' }
+#   - { name: 'master2', ip: '192.168.89.12' }
+#   - { name: 'master3', ip: '192.168.89.13' } 

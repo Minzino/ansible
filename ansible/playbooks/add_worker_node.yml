@@ -1,0 +1,18 @@
+---
+# Playbook to add a new worker node to the cluster
+
+# This playbook should be run with an inventory containing ONLY the new worker node(s)
+# and necessary variables like worker_join_command passed via --extra-vars
+
+- name: Apply common prerequisites to the new worker node
+  hosts: all # Target the node(s) defined in the dynamically generated inventory
+  become: true
+  roles:
+    - role: common
+
+- name: Join the new worker node to the cluster
+  hosts: all
+  roles:
+    - role: kubernetes_worker
+  # The kubernetes_worker role expects 'worker_join_command' to be available.
+  # Ensure it's passed correctly via extra_vars from the backend. 

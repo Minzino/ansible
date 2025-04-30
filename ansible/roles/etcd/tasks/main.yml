@@ -1,0 +1,110 @@
+---
+# tasks file for etcd
+
+- name: Create etcd group
+  group:
+    name: "{{ etcd_group }}"
+    state: present
+  become: true
+
+- name: Create etcd user
+  user:
+    name: "{{ etcd_user }}"
+    group: "{{ etcd_group }}"
+    system: true # Create as a system account
+    shell: /sbin/nologin
+    home: "{{ etcd_data_dir }}" # Standard home/data directory
+    create_home: true
+  become: true
+
+- name: Create etcd data directory
+  file:
+    path: "{{ etcd_data_dir }}"
+    state: directory
+    owner: "{{ etcd_user }}"
+    group: "{{ etcd_group }}"
+    mode: '0700'
+  become: true
+
+- name: Create etcd configuration directory
+  file:
+    path: "{{ etcd_config_dir }}"
+    state: directory
+    owner: root # Configuration owned by root
+    group: root
+    mode: '0755'
+  become: true
+
+# Download and Install etcd
+- name: Set etcd download URL
+  set_fact:
+    etcd_download_url: "{{ etcd_download_url_base }}/{{ etcd_version }}/etcd-{{ etcd_version }}-linux-amd64.tar.gz"
+
+- name: Download etcd archive
+  get_url:
+    url: "{{ etcd_download_url }}"
+    dest: "/tmp/etcd-{{ etcd_version }}-linux-amd64.tar.gz"
+    mode: '0644'
+  register: download_etcd_archive
+
+- name: Create temporary directory for extraction
+  file:
+    path: "/tmp/etcd-{{ etcd_version }}-extract"
+    state: directory
+    mode: '0755'
+
+- name: Extract etcd archive
+  unarchive:
+    src: "{{ download_etcd_archive.dest }}"
+    dest: "/tmp/etcd-{{ etcd_version }}-extract"
+    remote_src: yes
+    extra_opts:
+      - --strip-components=1 # Remove the top-level directory in the archive
+
+- name: Copy etcd binaries to /usr/local/bin
+  copy:
+    src: "/tmp/etcd-{{ etcd_version }}-extract/{{ item }}"
+    dest: "/usr/local/bin/{{ item }}"
+    remote_src: yes
+    mode: '0755'
+    owner: root
+    group: root
+  loop:
+    - etcd
+    - etcdctl
+  become: true
+
+- name: Clean up downloaded archive and extracted files
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "{{ download_etcd_archive.dest }}"
+    - "/tmp/etcd-{{ etcd_version }}-extract"
+
+# Configure etcd Service
+- name: Build initial cluster string
+  set_fact:
+    etcd_initial_cluster_string: "{% for host in groups['etcd'] %}{{ hostvars[host]['inventory_hostname'] }}={{ etcd_initial_advertise_peer_urls_protocol }}://{{ hostvars[host]['ansible_host'] | default(hostvars[host]['inventory_hostname']) }}:2380{% if not loop.last %},{% endif %}{% endfor %}"
+  when: etcd_initial_cluster_string is not defined
+
+- name: Create etcd systemd service file
+  template:
+    src: etcd.service.j2
+    dest: /etc/systemd/system/etcd.service
+    owner: root
+    group: root
+    mode: '0644'
+  become: true
+  notify: restart etcd
+
+- name: Enable and start etcd service
+  systemd:
+    name: etcd
+    enabled: true
+    state: started
+    daemon_reload: true # Ensure systemd reads the new unit file if changed
+  become: true
+
+# Add tasks for certificate generation and distribution if TLS is enabled
+# Add tasks for cluster health checks 

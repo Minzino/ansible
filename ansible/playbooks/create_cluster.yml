@@ -1,0 +1,121 @@
+---
+# Main playbook to create the Kubernetes cluster
+
+# Apply common configuration to all nodes first
+- name: Apply common prerequisites to all nodes
+  hosts: all
+  become: true
+  roles:
+    - role: common
+
+# Set up the external ETCD cluster
+- name: Configure ETCD cluster
+  hosts: etcd
+  become: true
+  roles:
+    - role: etcd
+  post_tasks:
+    # Simple health check after etcd setup
+    - name: Wait for etcd cluster to be healthy (simple check on first etcd node)
+      uri:
+        url: "http://{{ hostvars[groups['etcd'][0]]['ansible_host'] }}:2379/health"
+        method: GET
+        status_code: 200
+      register: etcd_health
+      until: etcd_health.status == 200
+      retries: 10
+      delay: 15
+      run_once: true # Check health from the control node targeting the first etcd member
+      delegate_to: localhost
+      when: groups['etcd'] | length > 0
+      # Note: For TLS enabled etcd, this check needs modification (certs, https)
+
+# Configure VIP using PCS on master nodes
+# This needs to happen before kubeadm init uses the VIP
+- name: Configure HA Load Balancer (VIP) on master nodes
+  hosts: masters
+  become: true
+  roles:
+    - role: load_balancer
+  post_tasks:
+    # Simple check if VIP is reachable (ping from control node)
+    - name: Wait for VIP {{ vip_address }} to become reachable
+      command:
+        cmd: "ping -c 1 -W 1 {{ vip_address }}"
+      register: ping_vip
+      until: ping_vip.rc == 0
+      retries: 10
+      delay: 6
+      run_once: true
+      delegate_to: localhost
+      changed_when: false
+      when: vip_address is defined
+
+# Set up Kubernetes Master nodes
+- name: Configure Kubernetes Master nodes
+  hosts: masters
+  # become: true # Most tasks within the role use become, avoid redundant declaration here
+  roles:
+    - role: kubernetes_master # This role handles init, join other masters, and CNI install
+  post_tasks:
+    # Simple check to see if nodes are registered (run on first master)
+    - name: Wait for all master nodes to be registered (basic check)
+      command:
+        cmd: kubectl get nodes --selector=node-role.kubernetes.io/control-plane --no-headers
+      register: master_nodes_check
+      until: master_nodes_check.stdout_lines | length == groups['masters'] | length
+      retries: 15
+      delay: 20
+      run_once: true
+      when: inventory_hostname == groups['masters'][0]
+      become: false # Run as user with kubeconfig
+      environment:
+        KUBECONFIG: "{{ ansible_env.HOME }}/.kube/config"
+      changed_when: false
+
+# Join Worker nodes to the cluster
+- name: Configure Kubernetes Worker nodes
+  hosts: workers
+  # become: true # Most tasks within the role use become
+  roles:
+    - role: kubernetes_worker
+  post_tasks:
+    # Simple check to see if worker nodes eventually register
+    - name: Wait for all worker nodes to be registered (basic check)
+      command:
+        cmd: kubectl get nodes --selector='!node-role.kubernetes.io/control-plane' --no-headers
+      register: worker_nodes_check
+      until: worker_nodes_check.stdout_lines | length == groups['workers'] | length
+      retries: 15 # Workers might take longer depending on image pulls
+      delay: 30
+      run_once: true
+      delegate_to: localhost # Check from control node after workers *should* have joined
+      # Note: This assumes kubectl is configured on the control node or delegate_to first master
+      # Consider running this on masters[0] instead:
+      # when: inventory_hostname == groups['masters'][0]
+      # become: false
+      # environment: { KUBECONFIG: "{{ ansible_env.HOME }}/.kube/config" }
+      changed_when: false
+
+# Optional: Add post-install checks or configurations
+# - name: Verify cluster health
+#   hosts: masters[0]
+#   become: false
+#   tasks:
+#     - name: Check node status
+#       command: kubectl get nodes
+#       register: node_status
+#       changed_when: false
+#       environment:
+#         KUBECONFIG: "{{ ansible_env.HOME }}/.kube/config"
+#     - debug:
+#         var: node_status.stdout_lines
+#
+#     - name: Check pod status in kube-system
+#       command: kubectl get pods -n kube-system
+#       register: pod_status
+#       changed_when: false
+#       environment:
+#         KUBECONFIG: "{{ ansible_env.HOME }}/.kube/config"
+#     - debug:
+#         var: pod_status.stdout_lines 

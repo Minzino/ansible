@@ -1,0 +1,53 @@
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: InitConfiguration
+bootstrapTokens:
+  - ttl: "24h"
+localAPIEndpoint:
+  # Use the first master's IP for the initial bootstrap
+  advertiseAddress: "{{ hostvars[inventory_hostname]['ansible_host'] | default(inventory_hostname) }}"
+  bindPort: 6443
+nodeRegistration:
+  criSocket: "unix:///var/run/containerd/containerd.sock"
+  kubeletExtraArgs:
+    cgroup-driver: systemd # Match containerd setting
+---
+apiVersion: kubeadm.k8s.io/v1beta3
+kind: ClusterConfiguration
+clusterName: "{{ cluster_name | default('kubernetes') }}"
+kubernetesVersion: "{{ k8s_version }}"
+# Control plane endpoint: Use VIP and default port 6443
+controlPlaneEndpoint: "{{ vip_address }}:6443"
+certificateKey: "{{ kubeadm_certificate_key | default('') }}" # Will be generated on first run and reused
+apiServer:
+  certSANs:
+    - "{{ vip_address }}"
+    - "localhost"
+    - "127.0.0.1"
+    # Add all master IPs and hostnames
+    {% for host in groups['masters'] %}
+    - "{{ hostvars[host]['ansible_host'] | default(hostvars[host]['inventory_hostname']) }}"
+    - "{{ hostvars[host]['inventory_hostname'] }}"
+    {% endfor %}
+etcd:
+  external:
+    endpoints:
+      {% for host in groups['etcd'] %}
+      - "{{ etcd_listen_client_urls_protocol }}://{{ hostvars[host]['ansible_host'] | default(hostvars[host]['inventory_hostname']) }}:2379"
+      {% endfor %}
+    # Assuming etcd TLS is not yet configured; add these if using TLS
+    # caFile: "{{ etcd_cert_dir }}/ca.crt"
+    # certFile: "{{ etcd_cert_dir }}/apiserver-etcd-client.crt"
+    # keyFile: "{{ etcd_cert_dir }}/apiserver-etcd-client.key"
+networking:
+  serviceSubnet: "{{ service_cidr }}"
+  podSubnet: "{{ cluster_cidr }}" # Ensure this matches CNI configuration (e.g., Cilium)
+  dnsDomain: "{{ cluster_dns_domain | default('cluster.local') }}"
+--- 
+# Kube-proxy configuration (optional, if needed for specific settings)
+# apiVersion: kubeproxy.config.k8s.io/v1alpha1
+# kind: KubeProxyConfiguration
+# mode: "ipvs"
+# --- 
+# Kubelet configuration (optional, if needed for specific settings)
+# apiVersion: kubelet.config.k8s.io/v1beta1
+# kind: KubeletConfiguration 

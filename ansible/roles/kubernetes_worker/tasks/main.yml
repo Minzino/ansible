@@ -1,0 +1,75 @@
+---
+# tasks file for kubernetes_worker
+
+# This assumes Debian/Ubuntu. Add logic for RedHat/CentOS if needed.
+
+- name: Create directory for apt keyrings
+  file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
+  become: true
+
+- name: Download Kubernetes apt repository key
+  get_url:
+    url: "https://pkgs.k8s.io/core:/stable:/v{{ k8s_version | regex_replace('^(\\d+\\.\\d+).*', '\\1') }}/deb/Release.key"
+    dest: /tmp/kubernetes-apt-keyring.asc
+    mode: '0644'
+  become: true
+
+- name: Debarmor Kubernetes apt repository key
+  command:
+    cmd: gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg /tmp/kubernetes-apt-keyring.asc
+    creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  become: true
+  changed_when: false
+
+- name: Clean up temporary key file
+  file:
+    path: /tmp/kubernetes-apt-keyring.asc
+    state: absent
+  become: true
+
+- name: Add Kubernetes apt repository
+  apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v{{ k8s_version | regex_replace('^(\\d+\\.\\d+).*', '\\1') }}/deb/ /"
+    state: present
+    filename: kubernetes
+  become: true
+
+# Ensure k8s_package_version_string fact is available (set in master role)
+# If running worker role independently, this might need adjustment
+
+- name: Install kubelet, kubeadm
+  apt:
+    name:
+      - kubelet={{ k8s_package_version_string | default(k8s_version + '-*') }} # Use fact or fallback
+      - kubeadm={{ k8s_package_version_string | default(k8s_version + '-*') }}
+      # - kubectl={{ k8s_package_version_string }} # Optional on workers
+    state: present
+    update_cache: true
+    allow_downgrade: true
+  become: true
+  notify: restart kubelet # Use handler defined in this role
+
+- name: Hold kubelet, kubeadm versions
+  dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop:
+    - kubelet
+    - kubeadm
+    # - kubectl # If installed
+  become: true
+  when: ansible_os_family == "Debian"
+
+# Join the worker node to the cluster
+- name: Join worker node to the Kubernetes cluster
+  command:
+    cmd: "{{ worker_join_command }}"
+    creates: /etc/kubernetes/kubelet.conf # Idempotency check
+  become: true
+  when:
+    - worker_join_command is defined # Ensure the join command fact is available
+
+# Add tasks for kubeadm join 

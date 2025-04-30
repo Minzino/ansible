@@ -1,0 +1,28 @@
+# Common variables for all hosts
+
+# SSH User (can be overridden in inventory)
+# ansible_user: ubuntu
+
+# Network Configuration (Example - adjust as needed)
+cluster_cidr: "10.244.0.0/16"
+service_cidr: "10.96.0.0/12"
+cluster_dns_ip: "10.96.0.10" # Often the 10th IP in the service_cidr
+
+# Kubernetes Version
+k8s_version: "1.29.7" # Specify desired Kubernetes version
+
+# CNI Plugin (cilium)
+cni_plugin: "cilium"
+
+# Cilium Configuration
+cilium_version: "1.15.7" # Specify desired Cilium version
+cilium_manifest_url: "https://raw.githubusercontent.com/cilium/cilium/v{{ cilium_version }}/install/kubernetes/quick-install.yaml"
+
+# VIP Configuration (Example - adjust as needed)
+# vip_address: "192.168.89.100"
+# vip_interface: "eth0" # Interface for the VIP
+
+# OS Specifics (can be determined via facts later)
+# os_family: Debian # or RedHat
+
+# Add other common variables here 

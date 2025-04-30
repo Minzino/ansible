@@ -1,0 +1,19 @@
+---
+# defaults file for load_balancer
+
+# VIP Configuration (Ensure vip_address is defined in group_vars/all.yml or extra-vars)
+# vip_address: "192.168.89.100"
+vip_interface: "eth0" # Network interface for the VIP (!!! ADJUST AS NEEDED !!!)
+vip_cidr_netmask: "24" # Netmask for the VIP
+vip_resource_name: "kube_vip" # Name for the PCS VIP resource
+
+# PCS Cluster Configuration
+pcs_cluster_name: "k8s_cluster"
+# !!! SECURITY WARNING !!! 
+# Storing plain text passwords here is insecure. 
+# Use Ansible Vault to encrypt this value or pass it via extra-vars at runtime.
+# Example using Vault: pcs_hacluster_password: "{{ vault_pcs_password }}"
+pcs_hacluster_password: "YourSecurePassword" # !!! CHANGE AND SECURE THIS !!!
+
+# STONITH Configuration (Disabled for simplicity - NOT FOR PRODUCTION)
+disable_stonith: true 

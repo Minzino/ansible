@@ -1,0 +1,33 @@
+[Unit]
+Description=etcd key-value store
+Documentation=https://github.com/etcd-io/etcd
+After=network.target
+
+[Service]
+User={{ etcd_user }}
+Group={{ etcd_group }}
+Type=notify
+ExecStart=/usr/local/bin/etcd \
+ --name={{ inventory_hostname }} \
+ --data-dir={{ etcd_data_dir }} \
+ --initial-advertise-peer-urls={{ etcd_initial_advertise_peer_urls_protocol }}://{{ hostvars[inventory_hostname]['ansible_host'] | default(inventory_hostname) }}:2380 \
+ --listen-peer-urls={{ etcd_listen_peer_urls_protocol }}://{{ hostvars[inventory_hostname]['ansible_host'] | default(inventory_hostname) }}:2380 \
+ --listen-client-urls={{ etcd_listen_client_urls_protocol }}://{{ hostvars[inventory_hostname]['ansible_host'] | default(inventory_hostname) }}:2379,http://127.0.0.1:2379 \
+ --advertise-client-urls={{ etcd_advertise_client_urls_protocol }}://{{ hostvars[inventory_hostname]['ansible_host'] | default(inventory_hostname) }}:2379 \
+ --initial-cluster-token={{ etcd_initial_cluster_token }} \
+ --initial-cluster={{ etcd_initial_cluster_string }} \
+ --initial-cluster-state={{ etcd_initial_cluster_state }}
+# --cert-file={{ etcd_cert_dir }}/etcd-server.crt \
+# --key-file={{ etcd_cert_dir }}/etcd-server.key \
+# --peer-cert-file={{ etcd_cert_dir }}/etcd-peer.crt \
+# --peer-key-file={{ etcd_cert_dir }}/etcd-peer.key \
+# --trusted-ca-file={{ etcd_cert_dir }}/ca.crt \
+# --peer-trusted-ca-file={{ etcd_cert_dir }}/ca.crt \
+# --client-cert-auth={{ etcd_client_cert_auth | lower }}
+# --peer-client-cert-auth=true # If using mutual TLS for peers
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target 

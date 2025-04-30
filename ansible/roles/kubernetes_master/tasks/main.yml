@@ -1,0 +1,220 @@
+---
+# tasks file for kubernetes_master
+
+# This assumes Debian/Ubuntu. Add logic for RedHat/CentOS if needed.
+
+- name: Create directory for apt keyrings
+  file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
+  become: true
+
+- name: Download Kubernetes apt repository key
+  get_url:
+    url: "https://pkgs.k8s.io/core:/stable:/v{{ k8s_version | regex_replace('^(\\d+\\.\\d+).*', '\\1') }}/deb/Release.key"
+    dest: /tmp/kubernetes-apt-keyring.asc
+    mode: '0644'
+  become: true
+
+- name: Debarmor Kubernetes apt repository key
+  command:
+    cmd: gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg /tmp/kubernetes-apt-keyring.asc
+    creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+  become: true
+  changed_when: false # Command itself doesn't indicate change well, rely on 'creates'
+
+- name: Clean up temporary key file
+  file:
+    path: /tmp/kubernetes-apt-keyring.asc
+    state: absent
+  become: true
+
+- name: Add Kubernetes apt repository
+  apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v{{ k8s_version | regex_replace('^(\\d+\\.\\d+).*', '\\1') }}/deb/ /"
+    state: present
+    filename: kubernetes
+  become: true
+
+# Define the target package version string (adjust if needed based on actual repo)
+- name: Set target Kubernetes package version string
+  set_fact:
+    k8s_package_version_string: "{{ k8s_version }}-*" # Or query exact version e.g. '1.29.7-1.1'
+
+- name: Install kubelet, kubeadm, kubectl
+  apt:
+    name:
+      - kubelet={{ k8s_package_version_string }}
+      - kubeadm={{ k8s_package_version_string }}
+      - kubectl={{ k8s_package_version_string }}
+    state: present
+    update_cache: true # Run update cache before install
+    allow_downgrade: true # Allow downgrade if a newer patch was installed previously
+  become: true
+  notify: restart kubelet # Add handler if not present
+
+- name: Hold kubelet, kubeadm, kubectl versions
+  dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop:
+    - kubelet
+    - kubeadm
+    - kubectl
+  become: true
+  when: ansible_os_family == "Debian"
+
+# Initialize the Kubernetes cluster using kubeadm (only on the first master)
+- name: Create kubeadm config file from template
+  template:
+    src: kubeadm-config.yaml.j2
+    dest: /tmp/kubeadm-config.yaml
+    mode: '0640'
+  when: inventory_hostname == groups['masters'][0]
+  become: false # Run as ansible user if possible, adjust if sudo needed for /tmp write
+
+# This task requires 'vip_address' variable to be defined
+- name: Initialize Kubernetes cluster with kubeadm
+  command:
+    cmd: kubeadm init --config /tmp/kubeadm-config.yaml --upload-certs
+    creates: /etc/kubernetes/admin.conf
+  become: true
+  when: inventory_hostname == groups['masters'][0]
+  register: kubeadm_init_result
+
+# Optional: Display kubeadm init output for debugging
+# - name: Display kubeadm init output
+#   debug:
+#     var: kubeadm_init_result.stdout_lines
+#   when: inventory_hostname == groups['masters'][0]
+
+- name: Create .kube directory for the Ansible user
+  file:
+    path: "{{ ansible_env.HOME }}/.kube"
+    state: directory
+    mode: '0755'
+  become: false # Run as the user Ansible connects as
+  when: inventory_hostname in groups['masters']
+
+- name: Copy admin.conf to user's kube config
+  copy:
+    src: /etc/kubernetes/admin.conf
+    dest: "{{ ansible_env.HOME }}/.kube/config"
+    remote_src: yes
+    owner: "{{ ansible_user_id }}" # Use the user ID Ansible connected with
+    group: "{{ ansible_group_id }}" # Use the group ID Ansible connected with
+    mode: '0600'
+  become: true # Need sudo to read /etc/kubernetes/admin.conf
+  when: inventory_hostname in groups['masters']
+
+# Clean up temporary kubeadm config file
+- name: Remove temporary kubeadm config file
+  file:
+    path: /tmp/kubeadm-config.yaml
+    state: absent
+  when: inventory_hostname == groups['masters'][0]
+  become: false # Or true if needed
+
+# --- Tasks run on first master, but facts are set globally ---
+
+- name: Get certificate key for joining other masters
+  command:
+    # Note: Re-running upload-certs is safe and retrieves the key
+    cmd: kubeadm init phase upload-certs --upload-certs
+  become: true
+  register: upload_certs_result
+  run_once: true # Run only on one host (implicitly the first master due to ordering)
+  changed_when: false # This command doesn't change state after init
+  when: inventory_hostname == groups['masters'][0] # Ensure it runs on the init node
+
+# Extract the certificate key (adjust regex if output format changes)
+- name: Set certificate key fact
+  set_fact:
+    kubeadm_certificate_key: "{{ upload_certs_result.stdout_lines[-1] }}"
+  run_once: true
+  when: upload_certs_result.stdout_lines is defined
+
+- name: Generate join command for control plane nodes
+  command:
+    cmd: kubeadm token create --print-join-command
+  become: true
+  register: master_join_command_result
+  run_once: true
+  changed_when: false # Token creation is idempotent for retrieval
+  when: inventory_hostname == groups['masters'][0]
+
+- name: Set control plane join command fact
+  set_fact:
+    master_join_command: "{{ master_join_command_result.stdout }}"
+  run_once: true
+  when: master_join_command_result.stdout is defined
+
+- name: Generate join command for worker nodes
+  command:
+    cmd: kubeadm token create --print-join-command
+    # Could add --ttl if needed, defaults to 24h
+  become: true
+  register: worker_join_command_result
+  run_once: true
+  changed_when: false
+  when: inventory_hostname == groups['masters'][0]
+
+- name: Set worker join command fact
+  set_fact:
+    worker_join_command: "{{ worker_join_command_result.stdout }}"
+  run_once: true
+  when: worker_join_command_result.stdout is defined
+
+# Display join commands (optional, useful for debugging/manual joins)
+# - name: Display Control Plane Join Command
+#   debug:
+#     msg: "{{ master_join_command }} --control-plane --certificate-key {{ kubeadm_certificate_key }}"
+#   run_once: true
+#   when: master_join_command is defined and kubeadm_certificate_key is defined
+
+# - name: Display Worker Join Command
+#   debug:
+#     msg: "{{ worker_join_command }}"
+#   run_once: true
+#   when: worker_join_command is defined
+
+# --- End of first master specific tasks ---
+
+# Join other control plane nodes
+- name: Join remaining control plane nodes to the cluster
+  command:
+    cmd: "{{ master_join_command }} --control-plane --certificate-key {{ kubeadm_certificate_key }}"
+    creates: /etc/kubernetes/kubelet.conf # Idempotency check
+  become: true
+  when:
+    - inventory_hostname != groups['masters'][0]
+    - master_join_command is defined
+    - kubeadm_certificate_key is defined
+
+# Install CNI (Cilium) on the first master node
+- name: Check if Cilium DaemonSet already exists
+  command:
+    cmd: kubectl get daemonset cilium -n kube-system
+  register: cilium_ds_check
+  ignore_errors: true
+  changed_when: false
+  become: false # Run as ansible user with ~/.kube/config
+  run_once: true
+  when:
+    - inventory_hostname == groups['masters'][0]
+    - cni_plugin == 'cilium'
+
+- name: Install Cilium CNI using kubectl apply
+  command:
+    cmd: kubectl apply -f {{ cilium_manifest_url }}
+  become: false # Run as ansible user with ~/.kube/config
+  run_once: true
+  when:
+    - inventory_hostname == groups['masters'][0]
+    - cni_plugin == 'cilium'
+    - cilium_ds_check.rc != 0 # Only run if DaemonSet doesn't exist
+  environment:
+    KUBECONFIG: "{{ ansible_env.HOME }}/.kube/config"
+
+# Add tasks for VIP setup (PCS) 

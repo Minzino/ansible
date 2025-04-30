@@ -1,0 +1,26 @@
+---
+- name: Destroy Kubernetes Cluster
+  hosts: kube_cluster
+  become: true
+  gather_facts: false # Might not need facts for destruction
+  tasks:
+    - name: Reset Kubernetes nodes (kubeadm reset)
+      command: kubeadm reset -f
+      ignore_errors: true # Continue even if reset fails on some nodes
+
+# Add tasks to remove packages, clean up files, stop ETCD, remove PCS config etc.
+
+- name: Tear down ETCD Cluster
+  hosts: etcd
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Stop and disable etcd service
+      systemd:
+        name: etcd
+        state: stopped
+        enabled: false
+      ignore_errors: true
+    # Add tasks to remove etcd data directories
+
+# Add tasks to clean up bastion if necessary 
