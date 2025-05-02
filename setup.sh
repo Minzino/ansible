@@ -104,8 +104,35 @@ fi
 if [ ! -d "venv" ]; then
     read -p "Create Python virtual environment 'venv'? (y/N): " create_venv
     if [[ "$create_venv" =~ ^[Yy]$ ]]; then
+        # Check if python3-venv package is needed and installed (Debian/Ubuntu)
+        if command_exists apt-get && ! dpkg -s python3-venv > /dev/null 2>&1; then
+             # Try installing the generic python3-venv first
+             echo_warn "Python 'venv' module requires the 'python3-venv' system package."
+             read -p "Attempt to install 'python3-venv' using apt? (Requires sudo) (y/N): " install_venv_pkg
+             if [[ "$install_venv_pkg" =~ ^[Yy]$ ]]; then
+                 echo_info "Installing python3-venv..."
+                 sudo apt-get update
+                 # Try python3-venv first, then python3.X-venv if needed?
+                 # Usually python3-venv is sufficient as a meta-package or for the default python3
+                 sudo apt-get install -y python3-venv 
+                 if ! dpkg -s python3-venv > /dev/null 2>&1; then
+                     echo_error "Failed to install python3-venv package. Please install it manually and re-run the script."
+                     exit 1
+                 fi
+                 echo_info "'python3-venv' package installed successfully."
+             else
+                 echo_error "Cannot create virtual environment without 'python3-venv' package. Please install it manually."
+                 exit 1
+             fi
+        fi
+        
         echo_info "Creating Python virtual environment 'venv'..."
-        python3 -m venv venv
+        # Now attempt to create the venv
+        if ! python3 -m venv venv; then
+             echo_error "Failed to create virtual environment even after attempting package installation."
+             echo_error "Please check your Python installation and ensure the 'venv' module is available."
+             exit 1
+        fi
         echo_info "Virtual environment created."
     else
         echo_warn "Skipping virtual environment creation."
