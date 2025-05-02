@@ -25,17 +25,21 @@ command_exists() {
 # --- Check OS ---
 echo_info "Checking Operating System..."
 if [[ "$(uname)" == "Linux" ]]; then
-    # Further check for Debian/Ubuntu derivatives for apt
-    if ! command_exists apt-get; then
-        echo_warn "This script primarily supports Debian/Ubuntu based Linux distributions for automatic package installation."
-        echo_warn "For other distributions, please install Python 3.8+, pip, and Ansible manually."
-        # exit 1 # Or continue without apt support?
+    if command_exists lsb_release; then
+        OS=$(lsb_release -si)
+        VER=$(lsb_release -sr)
+        echo "운영체제: $OS $VER"
+        if [[ "$OS" != "Ubuntu" && "$OS" != "Debian" && "$OS" != "CentOS" ]]; then
+            echo "경고: 지원되지 않는 Linux 배포판입니다. 일부 기능이 작동하지 않을 수 있습니다."
+        fi
+    else
+        echo "lsb_release 명령어를 찾을 수 없습니다. Linux 배포판 확인 불가."
     fi
 elif [[ "$(uname)" == "Darwin" ]]; then
-     echo_warn "Detected macOS. Please ensure Python 3.8+, pip, and Ansible are installed (e.g., using Homebrew)."
-     # Add brew install commands here? Or just check?
+    echo "운영체제: macOS"
+    echo "경고: macOS는 공식적으로 지원되지 않습니다. 일부 기능이 작동하지 않을 수 있습니다."
 else
-    echo_warn "Unsupported OS detected. Please ensure Python 3.8+, pip, and Ansible are installed manually."
+    echo "지원되지 않는 운영체제입니다: $(uname)"
     exit 1
 fi
 
