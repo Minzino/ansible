@@ -3,6 +3,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, status, Response,
 from typing import List, Dict, Any, Optional
 from ..models.cluster import ClusterCreateRequest, ClusterCreateResponse, ClusterInfo, NodeInfo, ClusterLogs
 from ..services import ansible_service
+from ..services.cluster_service import get_cluster_logs
 import logging
 from pydantic import UUID4
 from ..services.database import get_status_db

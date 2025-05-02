@@ -176,4 +176,39 @@ echo_info "4. Start the backend server: cd backend && uvicorn app.main:app --hos
 echo_info "5. Run the CLI client: python client/cli.py"
 echo_info "-----------------------------------------------------"
 
+# --- Ansible Collection Installation ---
+echo_step "8. 필요한 Ansible 컬렉션 설치 중 (ansible.posix, community.general)"
+# Check within the activated venv
+if command -v ansible-galaxy >/dev/null 2>&1; then
+    # Install ansible.posix
+    echo "Ansible POSIX 컬렉션 설치 여부 확인 중 (가상 환경 내)..."
+    if ! ansible-galaxy collection list ansible.posix >/dev/null 2>&1; then
+        echo "ansible.posix 컬렉션을 가상 환경에 설치합니다..."
+        ansible-galaxy collection install ansible.posix
+        if [ $? -ne 0 ]; then
+            echo "ansible.posix 컬렉션 설치 실패."
+        else
+             echo "ansible.posix 컬렉션이 성공적으로 설치되었습니다."
+        fi
+    else
+        echo "ansible.posix 컬렉션이 이미 설치되어 있습니다 (가상 환경 내)."
+    fi
+
+    # Install community.general
+    echo "Ansible Community General 컬렉션 설치 여부 확인 중 (가상 환경 내)..."
+     if ! ansible-galaxy collection list community.general >/dev/null 2>&1; then
+        echo "community.general 컬렉션을 가상 환경에 설치합니다..."
+        ansible-galaxy collection install community.general
+        if [ $? -ne 0 ]; then
+            echo "community.general 컬렉션 설치 실패."
+        else
+             echo "community.general 컬렉션이 성공적으로 설치되었습니다."
+        fi
+    else
+        echo "community.general 컬렉션이 이미 설치되어 있습니다 (가상 환경 내)."
+    fi
+else
+    echo "ansible-galaxy 명령어를 찾을 수 없습니다 (가상 환경 내). Ansible 컬렉션 설치를 건너뛰었습니다."
+fi
+
 exit 0 
