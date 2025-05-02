@@ -248,11 +248,11 @@ async def remove_worker_node(
 
 @router.get("/{cluster_id}/logs", response_model=ClusterLogs)
 async def read_cluster_logs(
-    cluster_id: UUID4,
+    cluster_id: str,
     status_db=Depends(get_status_db)
 ):
     """클러스터의 로그를 조회합니다."""
-    logs = get_cluster_logs(str(cluster_id), status_db)
+    logs = get_cluster_logs(cluster_id, status_db)
     if logs is None:
         raise HTTPException(status_code=404, detail=f"Cluster with ID {cluster_id} not found")
     return logs
