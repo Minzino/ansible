@@ -6,14 +6,14 @@
   hosts: all
   become: true
   roles:
-    - role: ../roles/common
+    - common
 
 # Set up the external ETCD cluster
 - name: Configure ETCD cluster
   hosts: etcd
   become: true
   roles:
-    - role: ../roles/etcd
+    - etcd
   post_tasks:
     # Simple health check after etcd setup
     - name: Wait for etcd cluster to be healthy (simple check on first etcd node)
@@ -36,7 +36,7 @@
   hosts: masters
   become: true
   roles:
-    - role: ../roles/load_balancer
+    - load_balancer
   post_tasks:
     # Simple check if VIP is reachable (ping from control node)
     - name: Wait for VIP {{ vip_address }} to become reachable
@@ -56,7 +56,7 @@
   hosts: masters
   # become: true # Most tasks within the role use become, avoid redundant declaration here
   roles:
-    - role: ../roles/kubernetes_master # This role handles init, join other masters, and CNI install
+    - kubernetes_master # This role handles init, join other masters, and CNI install
   post_tasks:
     # Simple check to see if nodes are registered (run on first master)
     - name: Wait for all master nodes to be registered (basic check)
@@ -78,7 +78,7 @@
   hosts: workers
   # become: true # Most tasks within the role use become
   roles:
-    - role: ../roles/kubernetes_worker
+    - kubernetes_worker
   post_tasks:
     # Simple check to see if worker nodes eventually register
     - name: Wait for all worker nodes to be registered (basic check)

@@ -336,13 +336,23 @@ def _run_ansible(playbook_name: str, inventory_content: str, extra_vars: dict, c
         
         # 역할 경로 설정 - 절대 경로 사용
         roles_path = str(ANSIBLE_DIR / "roles")
-        
-        # Ansible 실행 환경 설정 및 로깅
-        env_vars = {
-            "ANSIBLE_ROLES_PATH": roles_path,
-            "ANSIBLE_HOST_KEY_CHECKING": "False",
-        }
         logger.info(f"Using Ansible roles path: {roles_path}")
+        
+        # 역할 경로를 임시 디렉토리에 심볼릭 링크 생성
+        temp_roles_dir = os.path.join(private_data_dir, "roles")
+        try:
+            # 소스 역할 디렉토리가 존재하는지 확인
+            if os.path.exists(roles_path):
+                logger.info(f"Creating symlink from {roles_path} to {temp_roles_dir}")
+                os.symlink(roles_path, temp_roles_dir)
+            else:
+                logger.warning(f"Roles directory {roles_path} does not exist. Can't create symlink.")
+        except Exception as e:
+            logger.warning(f"Failed to create roles symlink: {e}. Continuing anyway.")
+        
+        # Ansible 실행 환경 변수 직접 설정 (env_vars 매개변수 대신)
+        os.environ["ANSIBLE_ROLES_PATH"] = roles_path
+        os.environ["ANSIBLE_HOST_KEY_CHECKING"] = "False"
         
         logger.info(f"Cluster {cluster_id}: Running playbook {full_playbook_path} with inventory {inventory_file_path}")
         log_extra_vars = {k: ('***' if 'password' in k else v) for k, v in extra_vars.items()}
@@ -366,6 +376,7 @@ def _run_ansible(playbook_name: str, inventory_content: str, extra_vars: dict, c
 
         # 실행 옵션 향상: verbosity 추가하여 더 상세한 로그 생성 (-vvv와 동일)
         # lambda 함수 대신 명시적 함수 사용하여 매개변수 문제 해결
+        # env_vars 매개변수 제거 (대신 os.environ으로 직접 설정)
         runner_thread, runner = ansible_runner.run_async(
             private_data_dir=private_data_dir,
             playbook=full_playbook_path,
@@ -375,7 +386,6 @@ def _run_ansible(playbook_name: str, inventory_content: str, extra_vars: dict, c
             status_handler=wrapped_status_handler,
             quiet=False,
             verbosity=3,  # -vvv 수준의 상세 로그 생성 (최대 디버깅)
-            env_vars=env_vars,  # 환경 변수 추가
         )
         # Pass the temp dir path to the status handler via the runner_config
         # (ansible_status_handler already receives runner_config)
