@@ -354,102 +354,101 @@ def check_cluster_status():
 
     console.print(f"\nFetching status for cluster {cluster_id}...", style="cyan")
     
-    # 로그 표시 여부 선택
-    show_logs = inquirer.confirm("Show Ansible logs in real-time?", default=True)
+    # 로그 표시 옵션 메뉴
+    log_view_options = [
+        inquirer.List('log_view',
+                      message="로그 표시 방식을 선택하세요",
+                      choices=[
+                          ('실시간 로그 표시 (축약)', 'live'),
+                          ('전체 상세 로그 표시 (ansible-playbook -vvv 수준)', 'detailed'),
+                          ('로그 표시하지 않음', 'none')
+                      ],
+                      default='live'),
+    ]
+    
+    log_view_answers = inquirer.prompt(log_view_options)
+    if not log_view_answers: return
+    
+    log_view_mode = log_view_answers['log_view']
+    show_logs = log_view_mode != 'none'
+    show_detailed = log_view_mode == 'detailed'
     
     # 마지막으로 본 로그 인덱스
     last_log_index = -1
     
-    # Loop to poll status
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        transient=True,
-    ) as progress:
-        task_id = progress.add_task(f"Polling {cluster_id}", total=None)
+    # 폴링 간격 (초) - 더 빠른 업데이트
+    polling_interval = 2
+    
+    # 로그 실시간 화면 출력 제어
+    max_live_logs = 10 if not show_detailed else 100
+    
+    # Progress Bar 생성 (로그 모드가 아닌 경우에만)
+    if not show_detailed:
+        progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            transient=True,
+        ) 
+        progress_ctx = progress.__enter__()
+        task_id = progress_ctx.add_task(f"Polling {cluster_id}", total=None)
+    else:
+        progress_ctx = None
+        console.print("\n[bold cyan]전체 상세 로그 모드입니다. Ansible 실행 로그가 실시간으로 표시됩니다.[/bold cyan]\n")
+        console.print("=" * 80)
+    
+    try:
         while True:
-            status_data = get_cluster_status_api(cluster_id)
-            if not status_data:
-                progress.stop()
-                break # Error handled in API func
+            try:
+                status_data = get_cluster_status_api(cluster_id)
+                if not status_data:
+                    if progress_ctx:
+                        progress_ctx.stop()
+                    break # Error handled in API func
 
-            status = status_data.get('status', 'unknown')
-            message = status_data.get('message', '')
-            last_error = status_data.get('last_error')
-            
-            status_color = "green"
-            if "fail" in status:
-                status_color = "red"
-            elif "ing" in status or "pending" in status:
-                 status_color = "yellow"
-            elif status == "deleted":
-                status_color = "dim"
-
-            progress.update(task_id, description=f"Status: [bold {status_color}]{status}[/bold {status_color}] - {message or '...'}")
-            
-            # 로그 표시 옵션이 활성화된 경우 로그 가져오기
-            if show_logs:
-                logs = get_cluster_logs_api(cluster_id)
-                if logs and len(logs) > last_log_index + 1:
-                    # 진행 표시줄 일시 중지
-                    progress.stop()
-                    
-                    # 새 로그 라인만 표시
-                    new_logs = logs[last_log_index + 1:]
-                    for log_line in new_logs:
-                        # ANSI 색상 코드 처리 (선택 사항)
-                        if "TASK" in log_line:
-                            console.print(f"[bold cyan]{log_line}[/bold cyan]")
-                        elif "PLAY" in log_line:
-                            console.print(f"[bold green]{log_line}[/bold green]")
-                        elif "fatal:" in log_line or "ERROR" in log_line:
-                            console.print(f"[bold red]{log_line}[/bold red]")
-                        elif "ok:" in log_line:
-                            console.print(f"[green]{log_line}[/green]")
-                        elif "changed:" in log_line:
-                            console.print(f"[yellow]{log_line}[/yellow]")
-                        elif "skipping:" in log_line:
-                            console.print(f"[dim]{log_line}[/dim]")
-                        else:
-                            console.print(log_line)
-                    
-                    # 마지막 로그 인덱스 업데이트
-                    last_log_index = len(logs) - 1
-                    
-                    # 진행 표시줄 재시작
-                    task_id = progress.add_task(f"Polling {cluster_id}", total=None)
-                    progress.update(task_id, description=f"Status: [bold {status_color}]{status}[/bold {status_color}] - {message or '...'}")
-
-            # Define terminal states for polling
-            terminal_states = ["running", "failed", "deleted", "unknown", 
-                               "delete_failed", "add_worker_failed", "remove_worker_failed"]
-            if status in terminal_states:
-                progress.stop()
-                console.print(Panel.fit(
-                    f"[bold]ID:[/bold] {status_data['id']}\n" +
-                    f"[bold]Name:[/bold] {status_data['name']}\n" +
-                    f"[bold]Status:[/bold] {status}\n" +
-                    f"[bold]VIP:[/bold] {status_data['vip']}\n" +
-                    f"[bold]Masters:[/bold] { ', '.join(map(str, status_data['master_ips'])) }\n" +
-                    f"[bold]Workers:[/bold] { ', '.join(map(str, status_data['worker_ips'])) }\n" +
-                    (f"[bold]Message:[/bold] {message}\n" if message else "") +
-                    (f"[bold red]Last Error:[/bold red] {last_error}\n" if last_error else ""),
-                    title=f"Cluster Status: {cluster_id}",
-                    border_style="red" if "fail" in status else status_color # Use calculated color
-                ))
+                status = status_data.get('status', 'unknown')
+                message = status_data.get('message', '')
+                last_error = status_data.get('last_error')
                 
-                # 작업이 완료되면 전체 로그 보기 옵션 제공
-                if show_logs and (logs := get_cluster_logs_api(cluster_id)):
-                    view_full_logs = inquirer.confirm("View full Ansible logs?", default=True)
-                    if view_full_logs:
-                        console.print("\n[bold]Full Ansible Execution Logs:[/bold]", style="cyan")
-                        for log_line in logs:
-                            # ANSI 색상 코드 처리 (위와 동일)
+                status_color = "green"
+                if "fail" in status:
+                    status_color = "red"
+                elif "ing" in status or "pending" in status:
+                     status_color = "yellow"
+                elif status == "deleted":
+                    status_color = "dim"
+
+                status_line = f"Status: [bold {status_color}]{status}[/bold {status_color}] - {message or '...'}"
+                
+                # 상세 모드에서는 상태 변경 시 출력
+                if show_detailed:
+                    console.print(f"\n[cyan]{status_line}[/cyan]\n")
+                elif progress_ctx:
+                    progress_ctx.update(task_id, description=status_line)
+                
+                # 로그 표시 옵션이 활성화된 경우 로그 가져오기
+                if show_logs:
+                    logs = get_cluster_logs_api(cluster_id)
+                    if logs and len(logs) > last_log_index + 1:
+                        # 새 로그 라인만 표시
+                        new_logs = logs[last_log_index + 1:]
+                        
+                        # 상세 모드가 아닌 경우 진행 표시줄 일시 중지
+                        if not show_detailed and progress_ctx:
+                            progress_ctx.stop()
+                        
+                        # 로그가 너무 많으면 축약 (상세 모드 아닌 경우)
+                        display_logs = new_logs
+                        if not show_detailed and len(new_logs) > max_live_logs:
+                            console.print(f"[dim](새 로그 {len(new_logs)}줄 중 최근 {max_live_logs}줄만 표시)[/dim]")
+                            display_logs = new_logs[-max_live_logs:]
+                        
+                        for log_line in display_logs:
+                            # ANSI 색상 코드 처리 (선택 사항)
                             if "TASK" in log_line:
                                 console.print(f"[bold cyan]{log_line}[/bold cyan]")
                             elif "PLAY" in log_line:
                                 console.print(f"[bold green]{log_line}[/bold green]")
-                            elif "fatal:" in log_line or "ERROR" in log_line:
+                            elif "fatal:" in log_line or "ERROR" in log_line or "Failed" in log_line or "FAILED" in log_line:
                                 console.print(f"[bold red]{log_line}[/bold red]")
                             elif "ok:" in log_line:
                                 console.print(f"[green]{log_line}[/green]")
@@ -457,16 +456,94 @@ def check_cluster_status():
                                 console.print(f"[yellow]{log_line}[/yellow]")
                             elif "skipping:" in log_line:
                                 console.print(f"[dim]{log_line}[/dim]")
+                            elif "ITEM FAILED:" in log_line:
+                                console.print(f"[bold red]{log_line}[/bold red]")
+                            elif "CMD OUTPUT" in log_line:
+                                console.print(f"[blue]{log_line}[/blue]")
+                            elif "VERBOSE:" in log_line:
+                                console.print(f"[dim cyan]{log_line}[/dim cyan]")
+                            elif "DEBUG:" in log_line:
+                                console.print(f"[dim]{log_line}[/dim]")
                             else:
                                 console.print(log_line)
+                        
+                        # 마지막 로그 인덱스 업데이트
+                        last_log_index = len(logs) - 1
+                        
+                        # 상세 모드가 아닌 경우 진행 표시줄 재시작
+                        if not show_detailed and progress_ctx:
+                            task_id = progress_ctx.add_task(f"Polling {cluster_id}", total=None)
+                            progress_ctx.update(task_id, description=status_line)
+
+                # Define terminal states for polling
+                terminal_states = ["running", "failed", "deleted", "unknown", 
+                                   "delete_failed", "add_worker_failed", "remove_worker_failed"]
+                if status in terminal_states:
+                    if not show_detailed and progress_ctx:
+                        progress_ctx.stop()
+                    
+                    # 종료 상태 도달 시 최종 상태 표시
+                    console.print("\n" + "=" * 80)
+                    console.print(Panel.fit(
+                        f"[bold]ID:[/bold] {status_data['id']}\n" +
+                        f"[bold]Name:[/bold] {status_data['name']}\n" +
+                        f"[bold]Status:[/bold] {status}\n" +
+                        f"[bold]VIP:[/bold] {status_data['vip']}\n" +
+                        f"[bold]Masters:[/bold] { ', '.join(map(str, status_data['master_ips'])) }\n" +
+                        f"[bold]Workers:[/bold] { ', '.join(map(str, status_data['worker_ips'])) }\n" +
+                        (f"[bold]Message:[/bold] {message}\n" if message else "") +
+                        (f"[bold red]Last Error:[/bold red] {last_error}\n" if last_error else ""),
+                        title=f"Cluster Status: {cluster_id}",
+                        border_style="red" if "fail" in status else status_color # Use calculated color
+                    ))
+                    
+                    # 작업이 완료되면 전체 로그 보기 옵션 제공
+                    if show_logs and not show_detailed:
+                        view_full_logs = inquirer.confirm("전체 Ansible 로그를 보시겠습니까?", default=True)
+                        if view_full_logs and (logs := get_cluster_logs_api(cluster_id)):
+                            console.print("\n[bold]Full Ansible Execution Logs:[/bold]", style="cyan")
+                            for log_line in logs:
+                                # ANSI 색상 코드 처리 (위와 동일)
+                                if "TASK" in log_line:
+                                    console.print(f"[bold cyan]{log_line}[/bold cyan]")
+                                elif "PLAY" in log_line:
+                                    console.print(f"[bold green]{log_line}[/bold green]")
+                                elif "fatal:" in log_line or "ERROR" in log_line or "Failed" in log_line or "FAILED" in log_line:
+                                    console.print(f"[bold red]{log_line}[/bold red]")
+                                elif "ok:" in log_line:
+                                    console.print(f"[green]{log_line}[/green]")
+                                elif "changed:" in log_line:
+                                    console.print(f"[yellow]{log_line}[/yellow]")
+                                elif "skipping:" in log_line:
+                                    console.print(f"[dim]{log_line}[/dim]")
+                                elif "ITEM FAILED:" in log_line:
+                                    console.print(f"[bold red]{log_line}[/bold red]")
+                                elif "CMD OUTPUT" in log_line:
+                                    console.print(f"[blue]{log_line}[/blue]")
+                                elif "VERBOSE:" in log_line:
+                                    console.print(f"[dim cyan]{log_line}[/dim cyan]")
+                                elif "DEBUG:" in log_line:
+                                    console.print(f"[dim]{log_line}[/dim]")
+                                else:
+                                    console.print(log_line)
+                    
+                    break
                 
-                break
-            try:
-                time.sleep(5) # Poll every 5 seconds
+                # 폴링 간격만큼 대기
+                time.sleep(polling_interval)
+                
             except KeyboardInterrupt:
-                progress.stop()
+                if not show_detailed and progress_ctx:
+                    progress_ctx.stop()
                 console.print("\nStatus polling stopped.", style="yellow")
                 break
+                
+    except Exception as e:
+        console.print(f"[bold red]로그 모니터링 중 오류가 발생했습니다: {e}[/bold red]")
+    finally:
+        # 항상 progress context를 정리
+        if not show_detailed and progress_ctx:
+            progress_ctx.__exit__(None, None, None)
 
 def delete_cluster_action():
     cluster_id = select_cluster_for_action("delete")
@@ -602,6 +679,116 @@ def prompt_for_remove_worker():
     except Exception as e:
         console.print(f"[bold red]An unexpected error occurred:[/bold red] {e}")
 
+# 전용 로그 뷰어 함수 추가
+def view_detailed_logs():
+    """전용 로그 뷰어 함수 - 클러스터 로그를 다양한 방식으로 조회"""
+    cluster_id = select_cluster_for_action("view logs")
+    if not cluster_id: return
+    
+    console.print(f"\n[bold]클러스터 {cluster_id}의 로그를 조회합니다.[/bold]", style="cyan")
+    
+    # 로그 뷰어 옵션
+    log_options = [
+        inquirer.List('log_option',
+                      message="로그 조회 방식을 선택하세요",
+                      choices=[
+                          ('전체 로그 보기', 'full'),
+                          ('실시간 로그 모니터링 (새 로그만 표시)', 'tail'),
+                          ('에러 로그만 보기', 'errors'),
+                          ('특정 키워드로 필터링', 'filter'),
+                          ('돌아가기', 'back')
+                      ],
+                      carousel=True),
+    ]
+    
+    log_choice = inquirer.prompt(log_options)
+    if not log_choice or log_choice['log_option'] == 'back': 
+        return
+    
+    option = log_choice['log_option']
+    logs = get_cluster_logs_api(cluster_id)
+    if not logs:
+        console.print("이 클러스터에 로그가 없습니다.", style="yellow")
+        return
+    
+    if option == 'full':
+        # 전체 로그 보기
+        console.print(f"[bold cyan]=== 클러스터 {cluster_id} 전체 로그 ({len(logs)} 줄) ===[/bold cyan]\n")
+        display_logs(logs)
+        
+    elif option == 'tail':
+        # 실시간 모니터링 (tail -f 처럼)
+        console.print(f"[bold cyan]=== 클러스터 {cluster_id} 실시간 로그 모니터링 ===[/bold cyan]")
+        console.print("최신 로그만 표시합니다. Ctrl+C로 중단할 수 있습니다.", style="dim")
+        
+        last_log_index = len(logs) - 1
+        try:
+            while True:
+                time.sleep(2)  # 2초마다 업데이트
+                new_logs = get_cluster_logs_api(cluster_id)
+                if new_logs and len(new_logs) > last_log_index + 1:
+                    display_logs(new_logs[last_log_index + 1:])
+                    last_log_index = len(new_logs) - 1
+        except KeyboardInterrupt:
+            console.print("\n로그 모니터링을 중지했습니다.", style="yellow")
+            
+    elif option == 'errors':
+        # 에러 로그만 표시
+        error_logs = [
+            log for log in logs 
+            if any(err in log for err in ['fatal:', 'ERROR', 'Failed', 'FAILED', 'error', 'ITEM FAILED'])
+        ]
+        if not error_logs:
+            console.print("에러 로그가 없습니다.", style="green")
+            return
+            
+        console.print(f"[bold red]=== 클러스터 {cluster_id} 에러 로그 ({len(error_logs)} 줄) ===[/bold red]\n")
+        display_logs(error_logs)
+        
+    elif option == 'filter':
+        # 키워드로 필터링
+        keyword = inquirer.text(message="검색할 키워드를 입력하세요")
+        if not keyword:
+            return
+            
+        filtered_logs = [log for log in logs if keyword.lower() in log.lower()]
+        if not filtered_logs:
+            console.print(f"키워드 '{keyword}'를 포함하는 로그가 없습니다.", style="yellow")
+            return
+            
+        console.print(f"[bold cyan]=== 키워드 '{keyword}'로 필터링된 로그 ({len(filtered_logs)} 줄) ===[/bold cyan]\n")
+        display_logs(filtered_logs)
+
+def display_logs(logs):
+    """로그를 색상 코드와 함께 표시하는 헬퍼 함수"""
+    for log_line in logs:
+        # ANSI 색상 코드 처리 (선택 사항)
+        if "TASK" in log_line:
+            console.print(f"[bold cyan]{log_line}[/bold cyan]")
+        elif "PLAY" in log_line:
+            console.print(f"[bold green]{log_line}[/bold green]")
+        elif "fatal:" in log_line or "ERROR" in log_line or "Failed" in log_line or "FAILED" in log_line:
+            console.print(f"[bold red]{log_line}[/bold red]")
+        elif "ok:" in log_line:
+            console.print(f"[green]{log_line}[/green]")
+        elif "changed:" in log_line:
+            console.print(f"[yellow]{log_line}[/yellow]")
+        elif "skipping:" in log_line:
+            console.print(f"[dim]{log_line}[/dim]")
+        elif "ITEM FAILED:" in log_line:
+            console.print(f"[bold red]{log_line}[/bold red]")
+        elif "CMD OUTPUT" in log_line:
+            console.print(f"[blue]{log_line}[/blue]")
+        elif "VERBOSE:" in log_line:
+            console.print(f"[dim cyan]{log_line}[/dim cyan]")
+        elif "DEBUG:" in log_line:
+            console.print(f"[dim]{log_line}[/dim]")
+        else:
+            console.print(log_line)
+    
+    # 로그 끝에 구분선 추가
+    console.print("\n" + "=" * 80 + "\n")
+
 # --- Main Loop ---
 
 def main():
@@ -618,7 +805,8 @@ def main():
                               ('4. Remove Worker Node', 'remove_worker'),
                               ('5. Delete Cluster', 'delete'),
                               ('6. Check Cluster Status', 'status'),
-                              ('7. Exit', 'exit'),
+                              ('7. View Detailed Logs', 'logs'),  # 새 옵션 추가
+                              ('8. Exit', 'exit'),
                           ],
                           carousel=True),
         ]
@@ -640,6 +828,8 @@ def main():
                 delete_cluster_action()
             elif action == 'status':
                 check_cluster_status()
+            elif action == 'logs':  # 새 로그 뷰어 기능 실행
+                view_detailed_logs()
             elif action == 'exit':
                 break
             else:

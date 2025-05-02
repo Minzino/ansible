@@ -146,12 +146,16 @@ def ansible_event_handler(event, cluster_id, status_db):
     event_type = event['event']
     event_data = event.get('event_data', {})
     
+    # 모든 이벤트의 기본 정보를 로그로 저장
+    log_entry = None
+    
     # 모든 이벤트에서 로그 줄 추출 및 저장
     if 'stdout' in event and event['stdout'] and event['stdout'].strip():
         log_line = event['stdout'].strip()
+        log_entry = log_line
         update_status(cluster_id, status_db[cluster_id]["status"], status_db, log_line=log_line)
     
-    # 이벤트 타입별 처리 (기존 코드)
+    # 이벤트 타입별 상세 처리 (확장된 처리)
     if event_type == 'runner_on_failed':
         task_name = event_data.get('task')
         host = event_data.get('host')
@@ -159,18 +163,78 @@ def ansible_event_handler(event, cluster_id, status_db):
         error_msg = f"Task '{task_name}' failed on host '{host}'. Result: {result.get('msg', 'No message')}"
         logger.error(error_msg)
         update_status(cluster_id, status_db[cluster_id]["status"], status_db, error_info=error_msg)
+        
+        # 상세 오류 로그 추가
+        if 'results' in result:
+            for i, item_result in enumerate(result['results']):
+                if 'failed' in item_result and item_result['failed']:
+                    item_error = item_result.get('msg', f"Item #{i} failed")
+                    update_status(cluster_id, status_db[cluster_id]["status"], status_db, 
+                                  log_line=f"ITEM FAILED: {item_error}")
+
+    elif event_type == 'runner_on_ok':
+        task_name = event_data.get('task')
+        host = event_data.get('host')
+        changed = event_data.get('res', {}).get('changed', False)
+        status_text = "changed" if changed else "ok"
+        msg = f"Task '{task_name}' {status_text} on host '{host}'"
+        logger.info(msg)
+        
+        # 중요한 작업 결과 로깅
+        if "command" in task_name.lower() or "shell" in task_name.lower():
+            cmd_result = event_data.get('res', {}).get('stdout', '')
+            if cmd_result:
+                update_status(cluster_id, status_db[cluster_id]["status"], status_db, 
+                              log_line=f"CMD OUTPUT ({host}): {cmd_result}")
 
     elif event_type == 'playbook_on_task_start':
         task_name = event_data.get('name')
         logger.info(f"Cluster {cluster_id}: Starting task: {task_name}")
         update_status(cluster_id, status_db[cluster_id]["status"], status_db, message=f"Running task: {task_name}")
-
-    elif event_type == 'verbose': # Reduce noise from verbose events if needed
-        pass
+        
+    elif event_type == 'playbook_on_play_start':
+        play_name = event_data.get('name')
+        logger.info(f"Cluster {cluster_id}: Starting play: {play_name}")
+        update_status(cluster_id, status_db[cluster_id]["status"], status_db, message=f"Running play: {play_name}")
+    
+    elif event_type == 'runner_on_unreachable':
+        task_name = event_data.get('task')
+        host = event_data.get('host')
+        error_msg = f"Host '{host}' is unreachable during task '{task_name}'"
+        logger.error(error_msg)
+        update_status(cluster_id, status_db[cluster_id]["status"], status_db, error_info=error_msg)
+    
+    elif event_type == 'runner_on_skipped':
+        task_name = event_data.get('task')
+        host = event_data.get('host')
+        logger.info(f"Task '{task_name}' skipped on host '{host}'")
+    
+    elif event_type == 'verbose':
+        # verbose 이벤트의 중요 정보도 로깅
+        if event.get('level', 0) >= 2:  # -vv 이상의 레벨
+            verbose_data = event.get('event_data', {})
+            if verbose_data and not log_entry:  # 이미 로깅되지 않은 경우
+                update_status(cluster_id, status_db[cluster_id]["status"], status_db, 
+                              log_line=f"VERBOSE: {str(verbose_data)[:200]}")
+    
+    elif event_type == 'runner_item_on_failed':
+        task_name = event_data.get('task')
+        host = event_data.get('host')
+        item = event_data.get('item')
+        error_msg = f"Task '{task_name}' failed on host '{host}' with item: {item}"
+        logger.error(error_msg)
+        update_status(cluster_id, status_db[cluster_id]["status"], status_db, error_info=error_msg)
+        
+    elif event_type in ['debug', 'runner_on_start']:
+        # 디버깅 관련 이벤트는 간단하게 로깅
+        if not log_entry and 'data' in event:  # 이미 로깅되지 않은 경우
+            debug_data = str(event.get('data', ''))[:200]  # 너무 길면 잘라냄
+            if debug_data.strip():
+                update_status(cluster_id, status_db[cluster_id]["status"], status_db, 
+                              log_line=f"DEBUG: {debug_data}")
     else:
-        # 로그 이벤트 디버깅을 위해 주석 해제
-        # logger.debug(f"Cluster {cluster_id}: Ansible event: {event_type}")
-        pass
+        # 다른 모든 이벤트 유형 로깅 (디버깅용)
+        logger.debug(f"Cluster {cluster_id}: Unhandled Ansible event: {event_type}")
 
 def ansible_status_handler(status_data, runner_config, cluster_id, status_db):
     """Callback function for ansible-runner status changes (end of playbook)."""
@@ -246,8 +310,8 @@ def _run_ansible(playbook_name: str, inventory_content: str, extra_vars: dict, c
         inventory_file_path = os.path.join(private_data_dir, "hosts.ini")
         with open(inventory_file_path, 'w') as f:
             f.write(inventory_content)
-
-        # 플레이북 경로 수정 및 존재 확인 로깅 추가
+        
+        # 플레이북 경로 확인 및 로깅
         full_playbook_path = str(ANSIBLE_DIR / "playbooks" / playbook_name)
         logger.info(f"Looking for playbook at: {full_playbook_path}")
         
@@ -265,17 +329,34 @@ def _run_ansible(playbook_name: str, inventory_content: str, extra_vars: dict, c
         logger.info(f"Cluster {cluster_id}: Running playbook {full_playbook_path} with inventory {inventory_file_path}")
         log_extra_vars = {k: ('***' if 'password' in k else v) for k, v in extra_vars.items()}
         logger.debug(f"Cluster {cluster_id}: Extra Vars: {log_extra_vars}")
+        
+        # 로깅 출력 디렉토리 생성
+        os.makedirs(os.path.join(private_data_dir, 'artifacts/job_events'), exist_ok=True)
+        
+        # 이벤트와 상태 핸들러 함수 래핑 - 오류 해결 및 로깅 향상
+        def wrapped_event_handler(event):
+            try:
+                ansible_event_handler(event, cluster_id, status_db)
+            except Exception as e:
+                logger.exception(f"Error in event handler: {e}")
+        
+        def wrapped_status_handler(status_data, runner_config=None):
+            try:
+                ansible_status_handler(status_data, runner_config, cluster_id, status_db)
+            except Exception as e:
+                logger.exception(f"Error in status handler: {e}")
 
-        # 실행 옵션 향상: verbosity 추가하여 더 상세한 로그 생성 (-vv와 동일)
+        # 실행 옵션 향상: verbosity 추가하여 더 상세한 로그 생성 (-vvv와 동일)
+        # lambda 함수 대신 명시적 함수 사용하여 매개변수 문제 해결
         runner_thread, runner = ansible_runner.run_async(
             private_data_dir=private_data_dir,
             playbook=full_playbook_path,
             inventory=inventory_file_path,
             extravars=extra_vars,
-            event_handler=lambda e: ansible_event_handler(e, cluster_id, status_db),
-            status_handler=lambda s, rc: ansible_status_handler(s, rc, cluster_id, status_db),
+            event_handler=wrapped_event_handler,
+            status_handler=wrapped_status_handler,
             quiet=False,
-            verbosity=2,  # -vv 수준의 상세 로그 생성
+            verbosity=3,  # -vvv 수준의 상세 로그 생성 (최대 디버깅)
         )
         # Pass the temp dir path to the status handler via the runner_config
         # (ansible_status_handler already receives runner_config)
