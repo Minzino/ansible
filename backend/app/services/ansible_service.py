@@ -396,6 +396,13 @@ def _run_ansible(playbook_name: str, inventory_content: str, extra_vars: dict, c
         os.environ["ANSIBLE_ROLES_PATH"] = roles_path
         os.environ["ANSIBLE_HOST_KEY_CHECKING"] = "False"
         
+        # 명시적으로 컬렉션 경로 설정
+        # 기본 경로를 사용하도록 설정 (사용자 홈과 시스템 전체 경로)
+        user_collection_path = str(Path.home() / ".ansible" / "collections")
+        system_collection_path = "/usr/share/ansible/collections"
+        os.environ["ANSIBLE_COLLECTIONS_PATHS"] = f"{user_collection_path}:{system_collection_path}"
+        logger.info(f"Setting ANSIBLE_COLLECTIONS_PATHS to: {os.environ['ANSIBLE_COLLECTIONS_PATHS']}")
+
         logger.info(f"Cluster {cluster_id}: Running playbook {full_playbook_path} with inventory {inventory_file_path}")
         log_extra_vars = {k: ('***' if 'password' in k else v) for k, v in extra_vars.items()}
         logger.debug(f"Cluster {cluster_id}: Extra Vars: {log_extra_vars}")
