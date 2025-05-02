@@ -230,11 +230,30 @@ def prompt_for_cluster_creation():
         inquirer.Text('ansible_user', message="Default SSH User for Ansible", default="ubuntu",
                       validate=validate_not_empty),
         inquirer.Text('vip_interface', message="Network Interface for VIP (optional, e.g., eth0)", default=None),
+        inquirer.List('auth_method', 
+                      message="SSH Authentication Method",
+                      choices=[
+                          ('Password Authentication', 'password'),
+                          ('Key Authentication (requires pre-configured SSH keys)', 'key')
+                      ],
+                      default='key'),
     ]
+    
+    answers = inquirer.prompt(questions)
+    if not answers: return  # User cancelled
+    
+    if answers['auth_method'] == 'password':
+        password_questions = [
+            inquirer.Password('ssh_password', 
+                              message="SSH Password for all nodes (can be overridden per node later)",
+                              validate=validate_not_empty),
+        ]
+        password_answers = inquirer.prompt(password_questions)
+        if not password_answers: return  # User cancelled
+        
+        answers['ssh_password'] = password_answers['ssh_password']
+    
     try:
-        answers = inquirer.prompt(questions)
-        if not answers: return # User cancelled
-
         master_ips = [ip.strip() for ip in answers['master_ips'].split(',')]
         worker_ips = [ip.strip() for ip in answers['worker_ips'].split(',')]
         default_port_int = int(answers['default_ssh_port']) if answers['default_ssh_port'] else None
@@ -269,6 +288,10 @@ def prompt_for_cluster_creation():
             "ansible_user": answers['ansible_user'],
             "vip_interface": answers['vip_interface'] or None,
         }
+        
+        if answers['auth_method'] == 'password':
+            payload["ssh_password"] = answers['ssh_password']
+            payload["use_ssh_password"] = True
 
         console.print("\nSending cluster creation request...", style="cyan")
         result = create_cluster_api(payload)
@@ -390,16 +413,43 @@ def prompt_for_add_worker():
         inquirer.Text('worker_ip', message="New Worker Node IP",
                       validate=validate_ip),
         inquirer.Text('worker_user', message="SSH User for new worker (optional, leave blank for default)", default=None),
+        inquirer.Text('worker_port', message="SSH Port for new worker (optional, defaults to cluster default)", 
+                      validate=validate_port, default=None),
+        inquirer.List('auth_method', 
+                      message="SSH Authentication Method",
+                      choices=[
+                          ('Password Authentication', 'password'),
+                          ('Key Authentication (requires pre-configured SSH keys)', 'key')
+                      ],
+                      default='key'),
     ]
+    
+    answers = inquirer.prompt(questions)
+    if not answers: return
+    
+    if answers['auth_method'] == 'password':
+        password_questions = [
+            inquirer.Password('ssh_password', 
+                              message="SSH Password for new worker node",
+                              validate=validate_not_empty),
+        ]
+        password_answers = inquirer.prompt(password_questions)
+        if not password_answers: return
+        
+        answers['ssh_password'] = password_answers['ssh_password']
+    
     try:
-        answers = inquirer.prompt(questions)
-        if not answers: return
-
         payload = {
             "name": answers['worker_name'].strip(),
             "ip": answers['worker_ip'].strip(),
             "user": answers['worker_user'] or None,
+            "port": int(answers['worker_port']) if answers['worker_port'] else None,
         }
+        
+        if answers['auth_method'] == 'password':
+            payload["ssh_password"] = answers['ssh_password']
+            payload["use_ssh_password"] = True
+            
         add_worker_api(cluster_id, payload)
 
     except inquirer.errors.ValidationError as e:

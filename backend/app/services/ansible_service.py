@@ -10,29 +10,68 @@ import threading # Import threading for locks
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Assume Ansible files are relative to the project root
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-ANSIBLE_DIR = PROJECT_ROOT / "ansible"
+# 상대 경로로 정확한 프로젝트 루트 설정 (backend/app/services -> 3단계 상위)
+BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
+PROJECT_ROOT = BACKEND_DIR.parent  # /root/ansible/ 또는 설치된 위치
+ANSIBLE_DIR = PROJECT_ROOT / "ansible"  # ansible 디렉토리
+
+# 경로 로깅 추가
+logger.info(f"PROJECT_ROOT set to: {PROJECT_ROOT}")
+logger.info(f"ANSIBLE_DIR set to: {ANSIBLE_DIR}")
+
+# 경로 설정
 INVENTORY_TEMPLATE_PATH = ANSIBLE_DIR / "inventory" / "hosts.ini.j2"
+logger.info(f"Looking for inventory template at: {INVENTORY_TEMPLATE_PATH}")
 
 # Use a lock for status updates to handle potential concurrency if scaling later
 status_lock = threading.Lock()
 
 def _generate_inventory(inventory_data: dict) -> str:
     """Generates Ansible inventory content from data."""
+    # 템플릿 로더에 올바른.searchpath 전달
     template_loader = jinja2.FileSystemLoader(searchpath=str(ANSIBLE_DIR / "inventory"))
     template_env = jinja2.Environment(loader=template_loader, trim_blocks=True, lstrip_blocks=True)
-    template = template_env.get_template(INVENTORY_TEMPLATE_PATH.name)
+    
+    # 파일 이름만 전달 (경로 제외)
+    template_name = INVENTORY_TEMPLATE_PATH.name
+    logger.info(f"Loading template: {template_name} from searchpath: {ANSIBLE_DIR / 'inventory'}")
+    
+    template = template_env.get_template(template_name)
+
+    # SSH 비밀번호 관련 옵션 처리
+    use_ssh_password = inventory_data.get("use_ssh_password", False)
+    default_ssh_password = None
+    bastion_ssh_password = None
+    
+    if use_ssh_password and "ssh_password" in inventory_data:
+        # 비밀번호가 SecretStr 객체인 경우 처리
+        if hasattr(inventory_data["ssh_password"], "get_secret_value"):
+            default_ssh_password = inventory_data["ssh_password"].get_secret_value()
+        else:
+            default_ssh_password = inventory_data["ssh_password"]
+    
+    # Bastion 노드 비밀번호 처리
+    if use_ssh_password and "bastion_ssh_password" in inventory_data:
+        if hasattr(inventory_data["bastion_ssh_password"], "get_secret_value"):
+            bastion_ssh_password = inventory_data["bastion_ssh_password"].get_secret_value()
+        else:
+            bastion_ssh_password = inventory_data["bastion_ssh_password"]
+    elif use_ssh_password and default_ssh_password:
+        bastion_ssh_password = default_ssh_password
 
     # Prepare context, extracting port information
     context = {
         "bastion_ip": str(inventory_data.get("bastion_ip")),
         "bastion_port": inventory_data.get("bastion_port"), # Get bastion port
+        "bastion_ssh_password": bastion_ssh_password,
         "master_nodes": inventory_data.get("master_nodes_info", []),
         "worker_nodes": inventory_data.get("worker_nodes_info", []),
         "etcd_nodes": inventory_data.get("master_nodes_info", []),
         "ansible_user": inventory_data.get("ansible_user", "ubuntu"),
+        "use_ssh_password": use_ssh_password,
+        "default_ssh_password": default_ssh_password,
     }
+    
     # Ensure IPs and Ports within the nodes lists are correctly formatted
     for node_list_key in ["master_nodes", "worker_nodes", "etcd_nodes"]:
         if node_list_key in context:
@@ -49,12 +88,21 @@ def _generate_inventory(inventory_data: dict) -> str:
                             node.pop('port') # Remove invalid port
                     elif 'port' in node: # If port is None, remove it so Jinja condition works
                          node.pop('port')
+                         
+                    # SSH 비밀번호 처리
+                    if 'ssh_password' in node and hasattr(node['ssh_password'], 'get_secret_value'):
+                        node['ssh_password'] = node['ssh_password'].get_secret_value()
+                        
                 # Handle Pydantic models if somehow passed (less likely)
                 elif hasattr(node, 'ip'): 
                     node.ip = str(node.ip)
                     if not hasattr(node, 'port') or node.port is None:
                          # Ensure no port attribute if None
                          if hasattr(node, 'port'): delattr(node, 'port')
+                    # SSH 비밀번호 처리
+                    if hasattr(node, 'ssh_password') and node.ssh_password is not None:
+                        if hasattr(node.ssh_password, 'get_secret_value'):
+                            node.ssh_password = node.ssh_password.get_secret_value()
 
     return template.render(context)
 
@@ -177,10 +225,21 @@ def _run_ansible(playbook_name: str, inventory_content: str, extra_vars: dict, c
         with open(inventory_file_path, 'w') as f:
             f.write(inventory_content)
 
+        # 플레이북 경로 수정 및 존재 확인 로깅 추가
         full_playbook_path = str(ANSIBLE_DIR / "playbooks" / playbook_name)
+        logger.info(f"Looking for playbook at: {full_playbook_path}")
+        
         if not os.path.exists(full_playbook_path):
-            raise FileNotFoundError(f"Playbook not found at {full_playbook_path}")
-
+            # 파일이 없으면 다른 위치도 시도
+            alternative_path = str(PROJECT_ROOT / "playbooks" / playbook_name)
+            logger.info(f"Playbook not found, trying alternative path: {alternative_path}")
+            
+            if os.path.exists(alternative_path):
+                full_playbook_path = alternative_path
+                logger.info(f"Using alternative playbook path: {full_playbook_path}")
+            else:
+                raise FileNotFoundError(f"Playbook not found at {full_playbook_path} or {alternative_path}")
+        
         logger.info(f"Cluster {cluster_id}: Running playbook {full_playbook_path} with inventory {inventory_file_path}")
         log_extra_vars = {k: ('***' if 'password' in k else v) for k, v in extra_vars.items()}
         logger.debug(f"Cluster {cluster_id}: Extra Vars: {log_extra_vars}")

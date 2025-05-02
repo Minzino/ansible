@@ -6,6 +6,7 @@ class NodeInfo(BaseModel):
     ip: IPvAnyAddress = Field(..., description="Node IP address")
     user: Optional[str] = Field(None, description="SSH user for this specific node (overrides default)")
     port: Optional[int] = Field(None, gt=0, lt=65536, description="SSH port for this specific node (overrides default)")
+    ssh_password: Optional[SecretStr] = Field(None, description="SSH password for this specific node (overrides default)")
 
 class ClusterCreateRequest(BaseModel):
     cluster_name: str = Field(default="kubernetes", description="Name for the Kubernetes cluster")
@@ -20,6 +21,9 @@ class ClusterCreateRequest(BaseModel):
     ansible_user: Optional[str] = Field("ubuntu", description="Default SSH user for Ansible connections")
     # Allow specifying a default port for masters/workers if individual ports aren't set
     default_ssh_port: Optional[int] = Field(None, gt=0, lt=65536, description="Default SSH port for nodes if not specified individually (defaults to 22)")
+    # SSH 인증 옵션 추가
+    ssh_password: Optional[SecretStr] = Field(None, description="Default SSH password for Ansible connections")
+    use_ssh_password: bool = Field(False, description="Whether to use password authentication instead of key-based authentication")
     # Use SecretStr for sensitive data
     pcs_hacluster_password: SecretStr = Field(..., description="Password for the 'hacluster' user for PCS")
     # Add other necessary variables like SSH key path if needed
@@ -32,6 +36,15 @@ class ClusterCreateRequest(BaseModel):
             default_port = values.get('default_ssh_port')
             if default_port:
                 v['port'] = default_port
+        return v
+
+    # If individual passwords are not set, apply default ssh_password
+    @validator('master_nodes', 'worker_nodes', pre=True, each_item=True)
+    def apply_default_password(cls, v, values):
+        if isinstance(v, dict) and v.get('ssh_password') is None and values.get('use_ssh_password', False):
+            default_password = values.get('ssh_password')
+            if default_password:
+                v['ssh_password'] = default_password
         return v
 
 class ClusterInfo(BaseModel):
