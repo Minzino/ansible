@@ -168,6 +168,19 @@ def remove_worker_api(cluster_id: str, worker_identifier: str):
         console.print(f"[bold red]Connection Error:[/bold red] {e}")
         return False
 
+def get_cluster_logs_api(cluster_id: str):
+    """Calls the GET /clusters/{cluster_id}/logs endpoint."""
+    try:
+        response = requests.get(f"{API_BASE_URL}/clusters/{cluster_id}/logs")
+        if response.status_code == 200:
+            return response.json()
+        else:
+            handle_api_error(response)
+            return None
+    except requests.exceptions.RequestException as e:
+        console.print(f"[bold red]Connection Error:[/bold red] {e}")
+        return None
+
 # --- CLI Action Functions ---
 
 def display_clusters():
@@ -340,6 +353,13 @@ def check_cluster_status():
     if not cluster_id: return
 
     console.print(f"\nFetching status for cluster {cluster_id}...", style="cyan")
+    
+    # 로그 표시 여부 선택
+    show_logs = inquirer.confirm("Show Ansible logs in real-time?", default=True)
+    
+    # 마지막으로 본 로그 인덱스
+    last_log_index = -1
+    
     # Loop to poll status
     with Progress(
         SpinnerColumn(),
@@ -366,6 +386,39 @@ def check_cluster_status():
                 status_color = "dim"
 
             progress.update(task_id, description=f"Status: [bold {status_color}]{status}[/bold {status_color}] - {message or '...'}")
+            
+            # 로그 표시 옵션이 활성화된 경우 로그 가져오기
+            if show_logs:
+                logs = get_cluster_logs_api(cluster_id)
+                if logs and len(logs) > last_log_index + 1:
+                    # 진행 표시줄 일시 중지
+                    progress.stop()
+                    
+                    # 새 로그 라인만 표시
+                    new_logs = logs[last_log_index + 1:]
+                    for log_line in new_logs:
+                        # ANSI 색상 코드 처리 (선택 사항)
+                        if "TASK" in log_line:
+                            console.print(f"[bold cyan]{log_line}[/bold cyan]")
+                        elif "PLAY" in log_line:
+                            console.print(f"[bold green]{log_line}[/bold green]")
+                        elif "fatal:" in log_line or "ERROR" in log_line:
+                            console.print(f"[bold red]{log_line}[/bold red]")
+                        elif "ok:" in log_line:
+                            console.print(f"[green]{log_line}[/green]")
+                        elif "changed:" in log_line:
+                            console.print(f"[yellow]{log_line}[/yellow]")
+                        elif "skipping:" in log_line:
+                            console.print(f"[dim]{log_line}[/dim]")
+                        else:
+                            console.print(log_line)
+                    
+                    # 마지막 로그 인덱스 업데이트
+                    last_log_index = len(logs) - 1
+                    
+                    # 진행 표시줄 재시작
+                    task_id = progress.add_task(f"Polling {cluster_id}", total=None)
+                    progress.update(task_id, description=f"Status: [bold {status_color}]{status}[/bold {status_color}] - {message or '...'}")
 
             # Define terminal states for polling
             terminal_states = ["running", "failed", "deleted", "unknown", 
@@ -384,6 +437,29 @@ def check_cluster_status():
                     title=f"Cluster Status: {cluster_id}",
                     border_style="red" if "fail" in status else status_color # Use calculated color
                 ))
+                
+                # 작업이 완료되면 전체 로그 보기 옵션 제공
+                if show_logs and (logs := get_cluster_logs_api(cluster_id)):
+                    view_full_logs = inquirer.confirm("View full Ansible logs?", default=True)
+                    if view_full_logs:
+                        console.print("\n[bold]Full Ansible Execution Logs:[/bold]", style="cyan")
+                        for log_line in logs:
+                            # ANSI 색상 코드 처리 (위와 동일)
+                            if "TASK" in log_line:
+                                console.print(f"[bold cyan]{log_line}[/bold cyan]")
+                            elif "PLAY" in log_line:
+                                console.print(f"[bold green]{log_line}[/bold green]")
+                            elif "fatal:" in log_line or "ERROR" in log_line:
+                                console.print(f"[bold red]{log_line}[/bold red]")
+                            elif "ok:" in log_line:
+                                console.print(f"[green]{log_line}[/green]")
+                            elif "changed:" in log_line:
+                                console.print(f"[yellow]{log_line}[/yellow]")
+                            elif "skipping:" in log_line:
+                                console.print(f"[dim]{log_line}[/dim]")
+                            else:
+                                console.print(log_line)
+                
                 break
             try:
                 time.sleep(5) # Poll every 5 seconds

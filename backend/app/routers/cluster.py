@@ -241,3 +241,17 @@ async def remove_worker_node(
                     content=f"Worker node {worker_name} removal process initiated for cluster {cluster_id}.")
 
 # TODO: Add endpoint for adding worker nodes (triggering add_worker_node.yml) 
+
+@router.get("/{cluster_id}/logs", response_model=List[str])
+async def get_cluster_logs(cluster_id: str):
+    """
+    클러스터 Ansible 실행 로그를 반환합니다.
+    """
+    if cluster_id not in cluster_status_db:
+        raise HTTPException(status_code=404, detail=f"Cluster {cluster_id} not found")
+    
+    # 로그가 없으면 빈 리스트 반환
+    if "logs" not in cluster_status_db[cluster_id]:
+        return []
+    
+    return cluster_status_db[cluster_id]["logs"]

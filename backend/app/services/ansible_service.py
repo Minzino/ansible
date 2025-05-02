@@ -26,6 +26,9 @@ logger.info(f"Looking for inventory template at: {INVENTORY_TEMPLATE_PATH}")
 # Use a lock for status updates to handle potential concurrency if scaling later
 status_lock = threading.Lock()
 
+# 로그 최대 줄 수 제한
+MAX_LOG_LINES = 1000
+
 def _generate_inventory(inventory_data: dict) -> str:
     """Generates Ansible inventory content from data."""
     # 템플릿 로더에 올바른.searchpath 전달
@@ -106,7 +109,7 @@ def _generate_inventory(inventory_data: dict) -> str:
 
     return template.render(context)
 
-def update_status(cluster_id, status, status_db, message=None, error_info=None, runner_artifact_dir=None):
+def update_status(cluster_id, status, status_db, message=None, error_info=None, runner_artifact_dir=None, log_line=None):
     """Helper function to update cluster status safely."""
     with status_lock:
         if cluster_id in status_db:
@@ -117,6 +120,19 @@ def update_status(cluster_id, status, status_db, message=None, error_info=None, 
                 status_db[cluster_id]["last_error"] = error_info
             if runner_artifact_dir:
                  status_db[cluster_id]["runner_artifact_dir"] = runner_artifact_dir
+            
+            # 로그 처리 추가
+            if log_line:
+                # 로그 배열이 없다면 초기화
+                if "logs" not in status_db[cluster_id]:
+                    status_db[cluster_id]["logs"] = []
+                
+                # 로그 추가
+                status_db[cluster_id]["logs"].append(log_line)
+                
+                # 로그 최대 라인 수 제한
+                if len(status_db[cluster_id]["logs"]) > MAX_LOG_LINES:
+                    status_db[cluster_id]["logs"] = status_db[cluster_id]["logs"][-MAX_LOG_LINES:]
 
             # Avoid logging sensitive data potentially in error_info
             log_message = f"Cluster {cluster_id} status updated to: {status}"
@@ -129,7 +145,13 @@ def ansible_event_handler(event, cluster_id, status_db):
     """Callback function for ansible-runner events."""
     event_type = event['event']
     event_data = event.get('event_data', {})
-
+    
+    # 모든 이벤트에서 로그 줄 추출 및 저장
+    if 'stdout' in event and event['stdout'] and event['stdout'].strip():
+        log_line = event['stdout'].strip()
+        update_status(cluster_id, status_db[cluster_id]["status"], status_db, log_line=log_line)
+    
+    # 이벤트 타입별 처리 (기존 코드)
     if event_type == 'runner_on_failed':
         task_name = event_data.get('task')
         host = event_data.get('host')
@@ -146,7 +168,7 @@ def ansible_event_handler(event, cluster_id, status_db):
     elif event_type == 'verbose': # Reduce noise from verbose events if needed
         pass
     else:
-        # Log other events if needed for debugging
+        # 로그 이벤트 디버깅을 위해 주석 해제
         # logger.debug(f"Cluster {cluster_id}: Ansible event: {event_type}")
         pass
 
@@ -244,7 +266,7 @@ def _run_ansible(playbook_name: str, inventory_content: str, extra_vars: dict, c
         log_extra_vars = {k: ('***' if 'password' in k else v) for k, v in extra_vars.items()}
         logger.debug(f"Cluster {cluster_id}: Extra Vars: {log_extra_vars}")
 
-        # Run in a separate thread
+        # 실행 옵션 향상: verbosity 추가하여 더 상세한 로그 생성 (-vv와 동일)
         runner_thread, runner = ansible_runner.run_async(
             private_data_dir=private_data_dir,
             playbook=full_playbook_path,
@@ -253,6 +275,7 @@ def _run_ansible(playbook_name: str, inventory_content: str, extra_vars: dict, c
             event_handler=lambda e: ansible_event_handler(e, cluster_id, status_db),
             status_handler=lambda s, rc: ansible_status_handler(s, rc, cluster_id, status_db),
             quiet=False,
+            verbosity=2,  # -vv 수준의 상세 로그 생성
         )
         # Pass the temp dir path to the status handler via the runner_config
         # (ansible_status_handler already receives runner_config)
