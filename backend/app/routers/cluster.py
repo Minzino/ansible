@@ -7,6 +7,7 @@ from ..services.cluster_service import get_cluster_logs
 import logging
 from pydantic import UUID4
 from ..services.database import get_status_db
+from ..core.state import cluster_status_db # Import shared state
 
 logger = logging.getLogger(__name__)
 
@@ -15,8 +16,8 @@ router = APIRouter(
     tags=["clusters"],
 )
 
-# In-memory storage for cluster status (replace with DB/file later)
-cluster_status_db = {}
+# In-memory storage for cluster status (removed - imported from core.state)
+# cluster_status_db = {}
 
 def adapt_status_to_cluster_info(status_info: dict) -> ClusterInfo:
     """Helper to convert stored status dict to ClusterInfo model."""

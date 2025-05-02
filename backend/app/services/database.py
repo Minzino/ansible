@@ -1,4 +1,5 @@
-from ..routers.cluster import cluster_status_db  # Import the shared dictionary
+# from ..routers.cluster import cluster_status_db  # Import the shared dictionary - Removed
+from ..core.state import cluster_status_db # Import from core.state instead
 from typing import Dict, Any
 
 # 이전 메모리 내 저장소 정의 제거
