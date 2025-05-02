@@ -18,10 +18,10 @@ class ClusterCreateRequest(BaseModel):
     # Assuming etcd runs on master nodes for this basic setup
     # If etcd nodes are separate, add: etcd_nodes: List[NodeInfo] = Field(..., min_length=3, max_length=3)
     vip_address: IPvAnyAddress = Field(..., description="Virtual IP address for Kubernetes API server")
-    vip_interface: Optional[str] = Field(None, description="Network interface for VIP (defaults to role default, e.g., eth0)")
+    vip_interface: Optional[str] = None
     ansible_user: Optional[str] = Field("ubuntu", description="Default SSH user for Ansible connections")
-    # Allow specifying a default port for masters/workers if individual ports aren't set
-    default_ssh_port: Optional[int] = Field(None, gt=0, lt=65536, description="Default SSH port for nodes if not specified individually (defaults to 22)")
+    default_ssh_port: Optional[int] = 22
+    ssh_private_key_path: Optional[str] = "/root/.ssh/id_rsa" # SSH 개인키 경로 추가
     # SSH 인증 옵션 추가
     ssh_password: Optional[SecretStr] = Field(None, description="Default SSH password for Ansible connections")
     use_ssh_password: bool = Field(False, description="Whether to use password authentication instead of key-based authentication")
@@ -30,14 +30,14 @@ class ClusterCreateRequest(BaseModel):
     # Add other necessary variables like SSH key path if needed
     # ssh_private_key_path: Optional[str] = None
 
-    # If individual ports are not set, apply default_ssh_port (Pydantic v2 style)
-    @validator('master_nodes', 'worker_nodes', pre=True, each_item=True)
-    def apply_default_port(cls, v, values):
-        if isinstance(v, dict) and v.get('port') is None:
-            default_port = values.get('default_ssh_port')
-            if default_port:
-                v['port'] = default_port
-        return v
+    @validator('master_nodes', 'worker_nodes')
+    def set_default_ssh_port(cls, nodes, values):
+        default_port = values.get('default_ssh_port')
+        if default_port:
+            for node in nodes:
+                if node.port is None:
+                    node.port = default_port
+        return nodes
 
     # If individual passwords are not set, apply default ssh_password
     @validator('master_nodes', 'worker_nodes', pre=True, each_item=True)

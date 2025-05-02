@@ -348,6 +348,15 @@ def ansible_status_handler(status_data, runner_config, cluster_id, status_db):
 def _run_ansible(playbook_name: str, inventory_content: str, extra_vars: dict, cluster_id: str, status_db: dict):
     """Internal function to configure and run ansible-runner."""
     private_data_dir = None
+    cluster_info = status_db.get(cluster_id, {})
+    ssh_private_key_path = cluster_info.get("ssh_private_key_path", "/root/.ssh/id_rsa") # 상태 DB에서 키 경로 가져오기
+    ident_list = [ssh_private_key_path] if ssh_private_key_path and os.path.exists(ssh_private_key_path) else []
+
+    if ssh_private_key_path and not ident_list:
+        logger.warning(f"Specified SSH private key path '{ssh_private_key_path}' not found. Attempting default SSH agent or keys.")
+    elif ident_list:
+        logger.info(f"Using SSH private key: {ssh_private_key_path}")
+
     try:
         private_data_dir = tempfile.mkdtemp(prefix=f"ansible_runner_{cluster_id}_")
         inventory_file_path = os.path.join(private_data_dir, "hosts.ini")
@@ -461,6 +470,7 @@ def _run_ansible(playbook_name: str, inventory_content: str, extra_vars: dict, c
             status_handler=wrapped_status_handler,
             quiet=False,
             verbosity=3,  # -vvv 수준의 상세 로그 생성 (최대 디버깅)
+            ident=ident_list # SSH 개인키 경로 전달 (리스트 형태)
         )
         # Pass the temp dir path to the status handler via the runner_config
         # (ansible_status_handler already receives runner_config)

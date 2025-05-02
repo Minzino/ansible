@@ -57,7 +57,8 @@ async def create_cluster(cluster_request: ClusterCreateRequest, background_tasks
         "pcs_hacluster_password_secret": cluster_request.pcs_hacluster_password.get_secret_value(),
         "vip_interface_from_req": cluster_request.vip_interface,
         # Store default port if provided, might be useful for context
-        "default_ssh_port_from_req": cluster_request.default_ssh_port 
+        "default_ssh_port_from_req": cluster_request.default_ssh_port,
+        "ssh_private_key_path": cluster_request.ssh_private_key_path # 전달할 데이터에 추가
     }
     # Ensure IPs are strings (service will handle port conversion/validation)
     for node_list_key in ["master_nodes_info", "worker_nodes_info"]:

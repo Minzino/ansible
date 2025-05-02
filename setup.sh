@@ -211,4 +211,15 @@ else
     echo "ansible-galaxy 명령어를 찾을 수 없습니다 (가상 환경 내). Ansible 컬렉션 설치를 건너뛰었습니다."
 fi
 
+echo "Basic dependencies installed."
+
+# sshpass 설치 (Ansible 비밀번호 인증에 필요)
+echo "Checking for sshpass..."
+if ! command -v sshpass &> /dev/null; then
+    echo "sshpass not found, installing..."
+    sudo apt install -y sshpass || { echo "Failed to install sshpass. Ansible password authentication might fail."; }
+else
+    echo "sshpass already installed."
+fi
+
 exit 0 
