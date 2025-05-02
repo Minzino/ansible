@@ -243,6 +243,45 @@ def ansible_status_handler(status_data, runner_config, cluster_id, status_db):
     playbook_name = Path(runner_config.playbook).name
     cluster_info = status_db.get(cluster_id, {})
 
+    # 상세 로그 파일 패스 확인 (stdout 파일)
+    stdout_path = None
+    for root, dirs, files in os.walk(os.path.join(artifact_dir, 'artifacts')):
+        for file in files:
+            if file == 'stdout':
+                stdout_path = os.path.join(root, file)
+                break
+        if stdout_path:
+            break
+    
+    # 로그 파일 내용 로딩 및 저장
+    stdout_content = ""
+    if stdout_path and os.path.exists(stdout_path):
+        try:
+            with open(stdout_path, 'r') as f:
+                stdout_content = f.read()
+                
+                # 로그 내용을 100줄 단위로 분할하여 저장
+                lines = stdout_content.splitlines()
+                for i in range(0, len(lines), 100):
+                    chunk = lines[i:i+100]
+                    log_entry = "\n".join(chunk)
+                    if log_entry.strip():
+                        update_status(cluster_id, status_db[cluster_id]["status"], status_db, log_line=f"RUNNER_LOG: {log_entry}")
+                
+                # 오류 메시지 추출
+                error_lines = []
+                for line in stdout_content.splitlines():
+                    if 'ERROR!' in line or 'fatal:' in line:
+                        error_lines.append(line)
+                
+                # 오류 메시지가 있으면 상태 업데이트에 포함
+                if error_lines and final_status == 'failed':
+                    error_message = "Extracted errors from Ansible output:\n" + "\n".join(error_lines)
+                    logger.error(f"Extracted error details for {cluster_id}: {error_message}")
+                    cluster_info["last_error"] = error_message
+        except Exception as e:
+            logger.error(f"Error extracting log from {stdout_path}: {e}")
+
     success_status = "unknown"
     success_message = "Playbook execution successful."
     if playbook_name == "create_cluster.yml":
@@ -251,12 +290,6 @@ def ansible_status_handler(status_data, runner_config, cluster_id, status_db):
     elif playbook_name == "destroy_cluster.yml":
         success_status = "deleted"
         success_message = "Cluster deletion successful."
-        # Potentially remove cluster from status_db here after successful deletion?
-        # Be careful with concurrency if multiple requests happen.
-        # with status_lock:
-        #     if cluster_id in status_db and status_db[cluster_id]["status"] == "deleting":
-        #        del status_db[cluster_id]
-        #        logger.info(f"Removed successfully deleted cluster {cluster_id} from status DB.")
     elif playbook_name == "add_worker_node.yml":
         success_status = "running" # Back to running after adding worker
         success_message = "Worker node added successfully."
@@ -291,8 +324,17 @@ def ansible_status_handler(status_data, runner_config, cluster_id, status_db):
         elif playbook_name == "remove_worker_node.yml": fail_status = "remove_worker_failed"
         elif playbook_name == "destroy_cluster.yml": fail_status = "delete_failed"
 
-        last_error = status_db.get(cluster_id, {}).get("last_error", "Playbook execution failed. Check logs.")
+        last_error = cluster_info.get("last_error", "Playbook execution failed. Check logs.")
+        if stdout_content and "ERROR!" in stdout_content:
+            # 전체 로그 내용에서 오류 메시지를 추출하여 마지막 오류에 추가
+            last_error = f"{last_error}\n\nFull error:\n{stdout_content}"
+        
         update_status(cluster_id, fail_status, status_db, "Playbook execution failed.", error_info=last_error, runner_artifact_dir=artifact_dir)
+    
+        # 로그 아티팩트 경로 URL 생성
+        log_url = f"/tmp/ansible_runner_{cluster_id}_*"
+        logger.error(f"Ansible execution failed for cluster {cluster_id}. Check logs at: {log_url}")
+    
     elif final_status == 'running':
         logger.info(f"Ansible playbook for cluster {cluster_id} is still running...") # Should not happen as final status
     else:

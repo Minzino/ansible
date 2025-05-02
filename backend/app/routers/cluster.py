@@ -1,9 +1,11 @@
 import uuid
-from fastapi import APIRouter, BackgroundTasks, HTTPException, status, Response, Body
-from typing import List
-from ..models.cluster import ClusterCreateRequest, ClusterCreateResponse, ClusterInfo, NodeInfo
+from fastapi import APIRouter, BackgroundTasks, HTTPException, status, Response, Body, Depends, Query
+from typing import List, Dict, Any, Optional
+from ..models.cluster import ClusterCreateRequest, ClusterCreateResponse, ClusterInfo, NodeInfo, ClusterLogs
 from ..services import ansible_service
 import logging
+from pydantic import UUID4
+from ..services.database import get_status_db
 
 logger = logging.getLogger(__name__)
 
@@ -18,17 +20,18 @@ cluster_status_db = {}
 def adapt_status_to_cluster_info(status_info: dict) -> ClusterInfo:
     """Helper to convert stored status dict to ClusterInfo model."""
     # Ensure IPs are converted back if needed, though status endpoint does this
-    return ClusterInfo(
+    result = ClusterInfo(
         id=status_info.get("id", "unknown"),
         name=status_info.get("name", "unknown"),
         status=status_info.get("status", "unknown"),
         vip=str(status_info.get("vip", "0.0.0.0")), # Ensure string conversion
         master_ips=[str(node.get('ip', 'unknown')) for node in status_info.get("master_nodes_info", [])],
         worker_ips=[str(node.get('ip', 'unknown')) for node in status_info.get("worker_nodes_info", [])],
-        # Add message or error info if desired in the response
-        # message=status_info.get("message"),
-        # last_error=status_info.get("last_error")
+        # Add message or error info in the response
+        message=status_info.get("message"),
+        last_error=status_info.get("last_error")
     )
+    return result
 
 @router.post("/", status_code=status.HTTP_202_ACCEPTED, response_model=ClusterCreateResponse)
 async def create_cluster(cluster_request: ClusterCreateRequest, background_tasks: BackgroundTasks):
@@ -242,16 +245,13 @@ async def remove_worker_node(
 
 # TODO: Add endpoint for adding worker nodes (triggering add_worker_node.yml) 
 
-@router.get("/{cluster_id}/logs", response_model=List[str])
-async def get_cluster_logs(cluster_id: str):
-    """
-    클러스터 Ansible 실행 로그를 반환합니다.
-    """
-    if cluster_id not in cluster_status_db:
-        raise HTTPException(status_code=404, detail=f"Cluster {cluster_id} not found")
-    
-    # 로그가 없으면 빈 리스트 반환
-    if "logs" not in cluster_status_db[cluster_id]:
-        return []
-    
-    return cluster_status_db[cluster_id]["logs"]
+@router.get("/{cluster_id}/logs", response_model=ClusterLogs)
+async def read_cluster_logs(
+    cluster_id: UUID4,
+    status_db=Depends(get_status_db)
+):
+    """클러스터의 로그를 조회합니다."""
+    logs = get_cluster_logs(str(cluster_id), status_db)
+    if logs is None:
+        raise HTTPException(status_code=404, detail=f"Cluster with ID {cluster_id} not found")
+    return logs

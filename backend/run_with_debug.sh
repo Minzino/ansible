@@ -1,6 +1,26 @@
 #!/bin/bash
 # 디버그 모드에서 백엔드 서버 실행
 
+# 가상 환경 확인 및 활성화
+if [ -d "venv" ]; then
+    echo "가상 환경을 활성화합니다..."
+    source venv/bin/activate
+else
+    echo "가상 환경이 존재하지 않습니다. 생성 중..."
+    python3 -m venv venv
+    source venv/bin/activate
+    pip install -r requirements.txt
+fi
+
+# Ansible 컬렉션 설치 - posix 모듈 설치
+echo "Ansible POSIX 컬렉션 설치 여부 확인 중..."
+if ! ansible-galaxy collection list | grep -q "ansible.posix"; then
+    echo "ansible.posix 컬렉션을 설치합니다..."
+    ansible-galaxy collection install ansible.posix
+else
+    echo "ansible.posix 컬렉션이 이미 설치되어 있습니다."
+fi
+
 # 실행 디렉토리 및 로그 파일 설정
 LOG_DIR="./logs"
 LOG_FILE="${LOG_DIR}/backend_$(date +%Y%m%d_%H%M%S).log"

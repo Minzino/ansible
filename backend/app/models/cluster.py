@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field, IPvAnyAddress, SecretStr, validator
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
+from datetime import datetime
 
 class NodeInfo(BaseModel):
     name: str = Field(..., description="Node hostname used in inventory")
@@ -54,8 +55,21 @@ class ClusterInfo(BaseModel):
     vip: IPvAnyAddress
     master_ips: List[IPvAnyAddress]
     worker_ips: List[IPvAnyAddress]
+    message: Optional[str] = None
+    last_error: Optional[str] = None
 
 class ClusterCreateResponse(BaseModel):
     message: str
     cluster_id: str # ID to track the creation process
-    status: str = "creating" 
+    status: str = "creating"
+
+class LogEntry(BaseModel):
+    """로그 항목 모델"""
+    timestamp: str
+    message: str
+
+class ClusterLogs(BaseModel):
+    """클러스터 로그 모델"""
+    cluster_id: str
+    cluster_name: str
+    log_entries: List[LogEntry] = [] 

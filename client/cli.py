@@ -10,12 +10,19 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
+import json
+import colorama
+from colorama import Fore, Style
+from datetime import datetime
 
 # Load environment variables (e.g., API URL)
 load_dotenv()
 API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
 
 console = Console()
+
+# 색상 초기화
+colorama.init()
 
 # --- Validation Functions ---
 def is_valid_ip(ip_str: str) -> bool:
@@ -522,18 +529,41 @@ def check_cluster_status():
                     
                     # 종료 상태 도달 시 최종 상태 표시
                     console.print("\n" + "=" * 80)
-                    console.print(Panel.fit(
+                    
+                    # 오류가 있는 경우 자세한 오류 표시
+                    error_panel = None
+                    if last_error:
+                        error_panel = Panel(
+                            f"[bold red]오류 내용:[/bold red]\n{last_error}", 
+                            title="오류 상세 정보", 
+                            border_style="red",
+                            expand=False
+                        )
+                    
+                    # 기본 상태 패널
+                    status_panel = Panel.fit(
                         f"[bold]ID:[/bold] {status_data['id']}\n" +
                         f"[bold]Name:[/bold] {status_data['name']}\n" +
                         f"[bold]Status:[/bold] {status}\n" +
                         f"[bold]VIP:[/bold] {status_data['vip']}\n" +
-                        f"[bold]Masters:[/bold] { ', '.join(map(str, status_data['master_ips'])) }\n" +
-                        f"[bold]Workers:[/bold] { ', '.join(map(str, status_data['worker_ips'])) }\n" +
-                        (f"[bold]Message:[/bold] {message}\n" if message else "") +
-                        (f"[bold red]Last Error:[/bold red] {last_error}\n" if last_error else ""),
+                        f"[bold]Masters:[/bold] {', '.join(map(str, status_data['master_ips']))}\n" +
+                        f"[bold]Workers:[/bold] {', '.join(map(str, status_data['worker_ips']))}\n" +
+                        (f"[bold]Message:[/bold] {message}\n" if message else ""),
                         title=f"Cluster Status: {cluster_id}",
-                        border_style="red" if "fail" in status else status_color # Use calculated color
-                    ))
+                        border_style="red" if "fail" in status else status_color
+                    )
+                    
+                    console.print(status_panel)
+                    
+                    # 오류 패널이 있으면 표시
+                    if error_panel:
+                        console.print("\n")
+                        console.print(error_panel)
+                        
+                        # 오류가 있는 경우 로그 파일 아티팩트 경로 표시
+                        console.print(f"\n[bold yellow]로그 확인 방법:[/bold yellow]")
+                        console.print(f"1. 터미널에서 다음 명령 실행: [dim]ls -la /tmp/ansible_runner_{cluster_id}_*[/dim]")
+                        console.print(f"2. 상세 로그 확인: [dim]cat /tmp/ansible_runner_{cluster_id}_*/artifacts/*/stdout[/dim]")
                     
                     # 작업이 완료되면 전체 로그 보기 옵션 제공
                     if show_logs and not show_detailed:
@@ -827,6 +857,132 @@ def display_logs(logs):
     # 로그 끝에 구분선 추가
     console.print("\n" + "=" * 80 + "\n")
 
+def display_cluster_logs(cluster_id, follow=False):
+    """실시간으로 클러스터 로그를 조회합니다."""
+    url = f"{API_BASE_URL}/clusters/{cluster_id}/logs"
+    console.print(f"{Fore.CYAN}클러스터 ID {cluster_id}의 로그를 조회합니다...{Style.RESET_ALL}")
+    
+    last_log_count = 0
+    while True:
+        try:
+            response = requests.get(url)
+            if response.status_code == 200:
+                logs = response.json()
+                log_entries = logs.get("log_entries", [])
+                
+                # 새로운 로그만 표시
+                if len(log_entries) > last_log_count:
+                    for i in range(last_log_count, len(log_entries)):
+                        log = log_entries[i]
+                        timestamp = log.get("timestamp", "")
+                        message = log.get("message", "")
+                        
+                        # RUNNER_LOG 메시지 색상 처리
+                        if "RUNNER_LOG:" in message:
+                            message = message.replace("RUNNER_LOG:", "")
+                            lines = message.split('\n')
+                            for line in lines:
+                                if "ERROR!" in line or "fatal:" in line:
+                                    console.print(f"{Fore.RED}{timestamp} {line}{Style.RESET_ALL}")
+                                elif "TASK [" in line or "PLAY [" in line:
+                                    console.print(f"{Fore.GREEN}{timestamp} {line}{Style.RESET_ALL}")
+                                elif "ok:" in line:
+                                    console.print(f"{Fore.BLUE}{timestamp} {line}{Style.RESET_ALL}")
+                                elif "changed:" in line:
+                                    console.print(f"{Fore.YELLOW}{timestamp} {line}{Style.RESET_ALL}")
+                                elif "skipping:" in line:
+                                    console.print(f"{Fore.MAGENTA}{timestamp} {line}{Style.RESET_ALL}")
+                                elif "failed:" in line:
+                                    console.print(f"{Fore.RED}{timestamp} {line}{Style.RESET_ALL}")
+                                else:
+                                    console.print(f"{timestamp} {line}")
+                        else:
+                            status_color = Fore.WHITE
+                            if "failed" in message.lower():
+                                status_color = Fore.RED
+                            elif "success" in message.lower():
+                                status_color = Fore.GREEN
+                            console.print(f"{status_color}{timestamp} {message}{Style.RESET_ALL}")
+                    
+                    last_log_count = len(log_entries)
+                
+                # 로그의 마지막 상태를 확인하여 작업이 완료되었는지 확인
+                if not follow or (log_entries and any(["failed" in entry.get("message", "").lower() or 
+                                                    "successful" in entry.get("message", "").lower() 
+                                                    for entry in log_entries[-5:]])):
+                    break
+            else:
+                console.print(f"{Fore.RED}로그 조회 중 오류 발생: {response.status_code}{Style.RESET_ALL}")
+                break
+                
+            if follow:
+                time.sleep(2)  # 2초마다 폴링
+            else:
+                break
+                
+        except Exception as e:
+            console.print(f"{Fore.RED}로그 조회 중 예외 발생: {str(e)}{Style.RESET_ALL}")
+            break
+    
+    # 마지막 상태 표시
+    try:
+        status_response = requests.get(f"{API_BASE_URL}/clusters/{cluster_id}")
+        if status_response.status_code == 200:
+            cluster_info = status_response.json()
+            status = cluster_info.get("status", "unknown")
+            last_error = cluster_info.get("last_error", "")
+            
+            status_color = Fore.WHITE
+            if status == "running":
+                status_color = Fore.GREEN
+            elif "failed" in status:
+                status_color = Fore.RED
+            
+            console.print(f"\n{status_color}현재 클러스터 상태: {status}{Style.RESET_ALL}")
+            
+            if last_error:
+                console.print(f"{Fore.RED}오류 정보: {last_error}{Style.RESET_ALL}")
+    except Exception as e:
+        console.print(f"{Fore.RED}상태 조회 중 예외 발생: {str(e)}{Style.RESET_ALL}")
+
+def view_cluster_logs():
+    """클러스터 로그를 조회합니다."""
+    # 클러스터 목록 가져오기
+    clusters = get_clusters()
+    
+    if not clusters:
+        console.print("[yellow]조회할 클러스터가 없습니다.[/yellow]")
+        input("\n계속하려면 Enter 키를 누르세요...")
+        return
+    
+    # 클러스터 선택 옵션 생성
+    choices = []
+    for cluster in clusters:
+        status_color = "green" if cluster["status"] == "running" else "red" if "failed" in cluster["status"] else "yellow"
+        choice_text = f"{cluster['name']} ({cluster['id'][:8]}) - 상태: [{status_color}]{cluster['status']}[/]"
+        choices.append((choice_text, cluster['id']))
+    
+    choices.append(("뒤로 가기", "back"))
+    
+    selected_id = get_selection("로그를 확인할 클러스터를 선택하세요", [c[0] for c in choices])
+    selected_index = next((i for i, c in enumerate(choices) if c[0] == selected_id), None)
+    
+    if selected_index is None or choices[selected_index][1] == "back":
+        return
+    
+    cluster_id = choices[selected_index][1]
+    
+    # 실시간 로그 확인 여부
+    choices = ["예, 작업 완료까지 기다립니다", "아니오, 현재 로그만 확인합니다"]
+    selected = get_selection("로그를 실시간으로 확인하시겠습니까?", choices)
+    follow = selected == "예, 작업 완료까지 기다립니다"
+    
+    # 로그 표시
+    with console.status("[bold green]로그 로딩 중...[/bold green]"):
+        display_cluster_logs(cluster_id, follow)
+    
+    input("\n계속하려면 Enter 키를 누르세요...")
+
 # --- Main Loop ---
 
 def main():
@@ -844,7 +1000,8 @@ def main():
                               ('5. Delete Cluster', 'delete'),
                               ('6. Check Cluster Status', 'status'),
                               ('7. View Detailed Logs', 'logs'),  # 새 옵션 추가
-                              ('8. Exit', 'exit'),
+                              ('8. View Cluster Logs', 'view_logs'),  # 새 옵션 추가
+                              ('9. Exit', 'exit'),
                           ],
                           carousel=True),
         ]
@@ -868,6 +1025,8 @@ def main():
                 check_cluster_status()
             elif action == 'logs':  # 새 로그 뷰어 기능 실행
                 view_detailed_logs()
+            elif action == 'view_logs':  # 새 로그 뷰어 기능 실행
+                view_cluster_logs()
             elif action == 'exit':
                 break
             else:

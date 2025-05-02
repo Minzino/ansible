@@ -22,7 +22,7 @@
   when: ansible_os_family == "Debian"
 
 - name: Set up system settings for Kubernetes
-  ansible.builtin.sysctl:
+  ansible.posix.sysctl:
     name: "{{ item.key }}"
     value: "{{ item.value }}"
     state: present
