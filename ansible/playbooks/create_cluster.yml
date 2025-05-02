@@ -2,8 +2,8 @@
 # Main playbook to create the Kubernetes cluster
 
 # Apply common configuration to all nodes first
-- name: Apply common prerequisites to all nodes
-  hosts: all
+- name: Apply common prerequisites to Kubernetes nodes
+  hosts: masters:workers:etcd
   become: true
   roles:
     - common
