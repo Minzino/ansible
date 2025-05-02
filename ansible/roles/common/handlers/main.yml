@@ -1,8 +1,13 @@
 ---
-# handlers file for common
- 
+# Handlers for common role
+
+- name: restart systemd-resolved
+  ansible.builtin.service:
+    name: systemd-resolved
+    state: restarted
+
 - name: restart containerd
-  systemd:
+  ansible.builtin.service:
     name: containerd
     state: restarted
   become: true 

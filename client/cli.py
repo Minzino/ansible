@@ -250,6 +250,9 @@ def prompt_for_cluster_creation():
                           ('Key Authentication (requires pre-configured SSH keys)', 'key')
                       ],
                       default='key'),
+        inquirer.Confirm('customize_node_names', 
+                      message="Would you like to customize node names? (default: master-1, worker-1, etc.)",
+                      default=False),
     ]
     
     answers = inquirer.prompt(questions)
@@ -271,20 +274,55 @@ def prompt_for_cluster_creation():
         worker_ips = [ip.strip() for ip in answers['worker_ips'].split(',')]
         default_port_int = int(answers['default_ssh_port']) if answers['default_ssh_port'] else None
         bastion_port_int = int(answers['bastion_port']) if answers['bastion_port'] else None
+        
+        # 노드 이름 커스터마이징 옵션이 활성화된 경우 각 노드 이름 입력 요청
+        if answers['customize_node_names']:
+            console.print("\n[bold blue]Enter custom names for master nodes:[/bold blue]")
+            master_names = []
+            for i, ip in enumerate(master_ips):
+                # 기본 이름 제안: 클러스터명-master-숫자
+                default_name = f"{answers['cluster_name']}-master-{i+1}".replace(' ', '-').lower()
+                name_question = [
+                    inquirer.Text(f'master_name_{i}', 
+                                 message=f"Name for Master node with IP {ip}",
+                                 default=default_name,
+                                 validate=validate_hostname)
+                ]
+                name_answer = inquirer.prompt(name_question)
+                if not name_answer: return  # User cancelled
+                master_names.append(name_answer[f'master_name_{i}'])
+                
+            console.print("\n[bold blue]Enter custom names for worker nodes:[/bold blue]")
+            worker_names = []
+            for i, ip in enumerate(worker_ips):
+                # 기본 이름 제안: 클러스터명-worker-숫자
+                default_name = f"{answers['cluster_name']}-worker-{i+1}".replace(' ', '-').lower()
+                name_question = [
+                    inquirer.Text(f'worker_name_{i}', 
+                                 message=f"Name for Worker node with IP {ip}",
+                                 default=default_name,
+                                 validate=validate_hostname)
+                ]
+                name_answer = inquirer.prompt(name_question)
+                if not name_answer: return  # User cancelled
+                worker_names.append(name_answer[f'worker_name_{i}'])
+        else:
+            # 기존 방식대로 이름 자동 생성
+            master_names = [f"master-{i+1}" for i in range(len(master_ips))]
+            worker_names = [f"worker-{i+1}" for i in range(len(worker_ips))]
 
-        # Create NodeInfo structure (apply default port if individual not specified)
-        # Note: Pydantic validator now handles applying default port, but we pass it
+        # Create NodeInfo structure
         master_nodes = []
         for i, ip in enumerate(master_ips):
             master_nodes.append({
-                "name": f"master-{i+1}", 
+                "name": master_names[i], 
                 "ip": ip,
-                "port": default_port_int # Pass default, specific ports could override later if UI added
+                "port": default_port_int
             })
         worker_nodes = []
         for i, ip in enumerate(worker_ips):
              worker_nodes.append({
-                 "name": f"worker-{i+1}", 
+                 "name": worker_names[i], 
                  "ip": ip,
                  "port": default_port_int
              })

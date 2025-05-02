@@ -1,2 +1,19 @@
 ---
-# defaults file for common 
+# Default variables for common role
+
+# Kubernetes version to install
+kubernetes_version: "1.29.7"
+
+# Container runtime
+container_runtime: "containerd"
+
+# DNS nameservers to use
+dns_nameservers:
+  - 8.8.8.8
+  - 8.8.4.4
+
+# Set to true to update all packages (not just security)
+system_update_all: false
+
+# Set timezone
+system_timezone: "UTC" 

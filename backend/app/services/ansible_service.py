@@ -326,6 +326,24 @@ def _run_ansible(playbook_name: str, inventory_content: str, extra_vars: dict, c
             else:
                 raise FileNotFoundError(f"Playbook not found at {full_playbook_path} or {alternative_path}")
         
+        # Ansible 설정 파일 경로 설정
+        ansible_cfg_path = str(ANSIBLE_DIR / "ansible.cfg")
+        if os.path.exists(ansible_cfg_path):
+            logger.info(f"Using Ansible config file: {ansible_cfg_path}")
+            os.environ['ANSIBLE_CONFIG'] = ansible_cfg_path
+        else:
+            logger.warning(f"Ansible config file not found at {ansible_cfg_path}")
+        
+        # 역할 경로 설정 - 절대 경로 사용
+        roles_path = str(ANSIBLE_DIR / "roles")
+        
+        # Ansible 실행 환경 설정 및 로깅
+        env_vars = {
+            "ANSIBLE_ROLES_PATH": roles_path,
+            "ANSIBLE_HOST_KEY_CHECKING": "False",
+        }
+        logger.info(f"Using Ansible roles path: {roles_path}")
+        
         logger.info(f"Cluster {cluster_id}: Running playbook {full_playbook_path} with inventory {inventory_file_path}")
         log_extra_vars = {k: ('***' if 'password' in k else v) for k, v in extra_vars.items()}
         logger.debug(f"Cluster {cluster_id}: Extra Vars: {log_extra_vars}")
@@ -357,6 +375,7 @@ def _run_ansible(playbook_name: str, inventory_content: str, extra_vars: dict, c
             status_handler=wrapped_status_handler,
             quiet=False,
             verbosity=3,  # -vvv 수준의 상세 로그 생성 (최대 디버깅)
+            env_vars=env_vars,  # 환경 변수 추가
         )
         # Pass the temp dir path to the status handler via the runner_config
         # (ansible_status_handler already receives runner_config)
