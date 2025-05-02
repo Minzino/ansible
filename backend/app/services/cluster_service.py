@@ -6,8 +6,7 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional
 from ..services.ansible_service import (
     run_create_cluster, run_destroy_cluster, 
-    run_add_worker_node, run_remove_worker_node,
-    status_db as ansible_status_db
+    run_add_worker_node, run_remove_worker_node
 )
 from ..models.cluster import ClusterLogs, LogEntry
 
