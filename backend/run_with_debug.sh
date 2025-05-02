@@ -22,7 +22,7 @@ echo "로그 파일: ${LOG_FILE}"
 
 # 상세 로깅 레벨로 서버 시작 (로그 파일과 콘솔에 동시 출력)
 # backend 디렉토리에서 app.main:app 으로 실행
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --log-level debug 2>&1 | tee ${LOG_FILE}
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --log-level debug --use-colors 2>&1 | tee ${LOG_FILE}
 
 # 실행 방법:
 # chmod +x run_with_debug.sh
