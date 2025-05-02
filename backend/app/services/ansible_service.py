@@ -564,6 +564,22 @@ def run_remove_worker_playbook(cluster_info: dict, worker_to_remove: dict, clust
         logger.exception(f"Failed to prepare remove worker playbook for {cluster_id}")
         update_status(cluster_id, "remove_worker_failed", status_db, f"Remove Worker Setup Error: {str(e)}")
 
+def run_create_cluster(inventory_data: dict, extra_vars: dict, cluster_id: str, status_db: dict):
+    """Wrapper function for cluster creation."""
+    return run_creation_playbook(inventory_data, extra_vars, cluster_id, status_db)
+
+def run_destroy_cluster(cluster_info: dict, extra_vars: dict, cluster_id: str, status_db: dict):
+    """Wrapper function for cluster deletion."""
+    return run_deletion_playbook(cluster_info, extra_vars, cluster_id, status_db)
+
+def run_add_worker_node(cluster_info: dict, new_worker_info: dict, cluster_id: str, status_db: dict):
+    """Wrapper function for adding worker node."""
+    return run_add_worker_playbook(cluster_info, new_worker_info, cluster_id, status_db)
+
+def run_remove_worker_node(cluster_info: dict, worker_to_remove: dict, cluster_id: str, status_db: dict):
+    """Wrapper function for removing worker node."""
+    return run_remove_worker_playbook(cluster_info, worker_to_remove, cluster_id, status_db)
+
 # Example of how to potentially handle cleanup later
 # You might need a mechanism to know when runner_thread finishes
 # def cleanup_runner_artifacts(private_data_dir):
