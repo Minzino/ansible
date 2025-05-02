@@ -47,12 +47,12 @@
   when: ansible_swaptotal_mb > 0
 
 - name: Ensure br_netfilter module is loaded
-  ansible.builtin.modprobe:
+  community.general.modprobe:
     name: br_netfilter
     state: present
 
 - name: Ensure overlay module is loaded
-  ansible.builtin.modprobe:
+  community.general.modprobe:
     name: overlay
     state: present
 
