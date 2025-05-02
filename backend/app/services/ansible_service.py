@@ -6,6 +6,7 @@ import shutil
 from pathlib import Path
 import logging
 import threading # Import threading for locks
+import subprocess
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -392,6 +393,31 @@ def _run_ansible(playbook_name: str, inventory_content: str, extra_vars: dict, c
         except Exception as e:
             logger.warning(f"Failed to create roles symlink: {e}. Continuing anyway.")
         
+        # --- 진단 코드 추가 시작 ---
+        try:
+            logger.info("Verifying community.general collection installation...")
+            # 현재 활성화된 Python 환경에서 ansible-galaxy 실행
+            galaxy_path = shutil.which("ansible-galaxy")
+            if not galaxy_path:
+                logger.warning("ansible-galaxy command not found in PATH.")
+            else:
+                # 실행될 정확한 명령어 로깅
+                cmd = [galaxy_path, "collection", "list", "community.general"]
+                logger.info(f"Running command: {' '.join(cmd)}")
+                result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+                logger.info(f"'ansible-galaxy collection list' stdout:\n{result.stdout}")
+                if result.stderr:
+                    logger.warning(f"'ansible-galaxy collection list' stderr:\n{result.stderr}")
+                if result.returncode != 0:
+                    logger.warning("ansible-galaxy list command failed.")
+                elif not result.stdout or "community.general" not in result.stdout:
+                     logger.warning("community.general collection not found by ansible-galaxy list.")
+                else:
+                     logger.info("community.general collection seems installed and visible.")
+        except Exception as diag_e:
+            logger.exception(f"Error during ansible-galaxy check: {diag_e}")
+        # --- 진단 코드 추가 끝 ---
+
         # Ansible 실행 환경 변수 직접 설정 (env_vars 매개변수 대신)
         os.environ["ANSIBLE_ROLES_PATH"] = roles_path
         os.environ["ANSIBLE_HOST_KEY_CHECKING"] = "False"
